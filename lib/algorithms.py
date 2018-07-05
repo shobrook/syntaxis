@@ -8,7 +8,7 @@ import ast
 import yaml
 
 CURR_DIR = os.path.dirname(os.path.realpath(__file__))
-SYNTAX = yaml.load(open('/'.join([CURR_DIR, "syntax.yml"]), 'r'))["Python"]
+SYNTAX = yaml.load(open('/'.join([CURR_DIR, "syntax.yml"]), 'r'))
 
 
 #########
