@@ -115,8 +115,8 @@ class AnalyzedAST(ast.NodeVisitor):
         self._built_in_funcs = {id: 0 for id in SYNTAX["built-ins"]}
         self._literals = {id: 0 for id in SYNTAX["literals"]}
         self._binary_ops = {id: 0 for id in SYNTAX["binary operations"]}
-        self._subscripts = {id: 0 for id in SYNTAX["subscripts"]}
         self._comprehensions = {id: 0 for id in SYNTAX["comprehensions"]}
+        self._generators = {id: 0 for id in SYNTAX["generators"]}
         self._statements = {id: 0 for id in SYNTAX["statements"]}
         self._control_flow = {id: 0 for id in SYNTAX["control flow"]}
         self._func_and_class_defs = {id: 0 for id in SYNTAX["definitions"]}
@@ -148,10 +148,10 @@ class AnalyzedAST(ast.NodeVisitor):
             self._literals[node_type] += 1
         elif node_type in SYNTAX["binary operations"]:
             self._binary_ops[node_type] += 1
-        elif node_type in SYNTAX["subscripts"]:
-            self._subscripts[node_type] += 1
         elif node_type in SYNTAX["comprehensions"]:
             self._comprehensions[node_type] += 1
+        elif node_type in SYNTAX["generators"]:
+            self._generators[node_type] += 1
         elif node_type in SYNTAX["statements"]:
             self._statements[node_type] += 1
         elif node_type in SYNTAX["control flow"]:
@@ -322,7 +322,6 @@ class AnalyzedAST(ast.NodeVisitor):
         return {
             "literals": self._literals,
             "binary_ops": self._binary_ops,
-            "subscripts": self._subscripts,
             "comprehensions": self._comprehensions,
             "statements": self._statements,
             "control_flow": self._control_flow,
