@@ -1,8 +1,8 @@
 # saplings
 
 `saplings` is a Python library for analyzing and manipulating abstract syntax trees. It holds a collection of algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. The primary features are:
-* Traversals: Search for nodes, generate frequency maps for specific nodes, and apply transformations to specific nodes
-* Analyses: Perform basic type-inference (powered by the [MyPy TypeChecker](https://github.com/python/mypy/wiki/Type-Checker)) and generate a frequency map for all imported packages and their features
+* __Traversals:__ Search for nodes, generate frequency maps for specific nodes, and apply transformations to specific nodes
+* __Analyses:__ Perform basic type-inference (powered by the [MyPy TypeChecker](https://github.com/python/mypy/wiki/Type-Checker)) and generate a frequency map for all imported packages and their features
 
 ## Install
 
