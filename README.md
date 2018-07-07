@@ -76,10 +76,16 @@ Basic type inference coming soon!
 
 #### `get_pkg_tree(module_names=[])`
 
+Documentation coming soon!
 <!--(See below for more details)-->
 
 ### `PackageTree` Object
 
+Documentation coming soon!
+
+#### `flatten()`
+
+Documentation coming soon!
 <!--- flatten() instance method-->
 
 ## Contributing
