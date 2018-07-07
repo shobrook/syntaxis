@@ -20,7 +20,9 @@ Requires Python 3.0 or higher.
 
 ## Features
 
-To get started, import the `Harvester` object from `saplings` and initialize it with the root AST node for your program. The `Harvester` object holds your program's AST and "saplings" (instance methods) for traversing and analyzing that tree. For example, let's say you wanted to count the number of `while` and `for` loops used in your program:
+To get started, import the `Harvester` object from `saplings` and initialize it with the root AST node for your program. The `Harvester` object holds your program's AST and "saplings" (instance methods) for traversing and analyzing that tree. 
+
+For example, let's say you wanted to count the number of `while` and `for` loops used in your program:
 
 ```python
 import ast
