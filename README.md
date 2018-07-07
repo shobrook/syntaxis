@@ -31,7 +31,7 @@ your_harvester = Harvester(your_ast)
 
 loop_counts = your_harvester.get_freq_map(nodes=[ast.While, ast.For])
 print(loop_counts)
-# >>> {ast.While: 19, ast.For: 12}
+# {ast.While: 19, ast.For: 12}
 ```
 
 ### `Harvester` Object
@@ -50,7 +50,7 @@ comprehensions = your_harvester.search_by_type(
      skip=[ast.FunctionDef]
 )
 print(comprehensions)
-# >>> [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
+# [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
 ```
 
 #### `search_by_id(node_id, skip=[])`
