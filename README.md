@@ -82,7 +82,7 @@ Documentation coming soon!
 Documentation coming soon!
 <!--- flatten() instance method-->
 
-## Contributing
+## Adding a Sapling
 
 If you've written an algorithm related to ASTs that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please try to adhere to the existing style. <!--Give actual instructions for where in the file you should contribute-->
 
