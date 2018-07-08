@@ -31,7 +31,7 @@ your_harvester = Harvester(your_ast)
 
 ### `Harvester` Object
 
-`Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following instance methods are available:
+`Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following saplings are available:
 
 #### `search_by_type(nodes, skip=[])`
 
