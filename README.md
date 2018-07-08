@@ -2,9 +2,8 @@
 
 `saplings` is a simple library for searching, analyzing, and transforming [abstract syntax trees.](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
 * __Traversals:__ 
-  * Searching for specific nodes by class, id, attributes, or scope
+  * Searching for specific nodes by type, id, attributes, or scope
   * Generating frequency maps for specific nodes
-  * Pretty-printing the tree to stdout or a text file
 * __Analyses:__ 
   * Applying custom transformations to the tree
   * Generating a `PackageTree` object that represents and tracks a program's usage of a particular Python package
@@ -18,11 +17,9 @@ Compiled binaries are available for [every release,](https://github.com/shobrook
 
 Requires Python 3.0 or higher.
 
-## Features
+## API
 
 To get started, import the `Harvester` object from `saplings` and initialize it with the root AST node for your program. The `Harvester` object holds your program's AST and "saplings" (instance methods) for traversing and analyzing that tree. 
-
-For example, let's say you wanted to count the number of `while` and `for` loops used in your program:
 
 ```python
 import ast
@@ -30,10 +27,6 @@ from saplings import Harvester
 
 your_ast = ast.parse("path/to/your_file.py")
 your_harvester = Harvester(your_ast)
-
-loop_counts = your_harvester.get_freq_map(nodes=[ast.While, ast.For])
-print(loop_counts)
-# {ast.While: 19, ast.For: 12}
 ```
 
 ### `Harvester` Object
@@ -42,7 +35,7 @@ print(loop_counts)
 
 #### `search_by_type(node_types, skip=[])`
 
-Returns a list of nodes belonging to a particular class (or classes). The `node_type` parameter is the list of node classes to retrieve, and the `skip` parameter is a list of subtrees (node classes) to skip in the traversal.
+Returns a list of nodes belonging to a particular class (or classes). The `node_types` parameter is the list of node classes to retrieve, and the `skip` parameter is a list of subtrees (node classes) to skip in the traversal.
 
 For example, the following code retrieves all list, set, and dictionary comprehension nodes from your AST, but skips all nodes contained in functions.
 
@@ -52,29 +45,32 @@ comprehensions = your_harvester.search_by_type(
      skip=[ast.FunctionDef]
 )
 print(comprehensions)
-# [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
+# stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
 ```
 
-#### `search_by_id(node_id, skip=[])`
+#### `search_by_id(node_ids, skip=[])`
 
-Coming soon! 
+Returns a list of `ast.Name` nodes with particular ids. The `node_ids` parameter is the list of ids to search for. 
 
-#### `get_freq_map(node_types=[], node_ids=[])`
+#### `get_freq_map_by_id(node_types=[], node_ids=[])`
 
-Returns a dictionary mapping node types (or ids) to their no. of occurences in the AST.
+Returns a dictionary mapping node types (or ids) to their no. of occurences in the AST. You can either use `node_types`, `node_ids`, or both parameters to define the list of nodes to retrieve. Both parameters are also optional, and by default `get_freq_maps()` will return a dictionary containing all nodes and their frequencies.
 
+For example, the following code counts the number of `while` and `for` loops used in your AST.
 
-<!--`nodes` is an optional parameter. By default, `get_freq_maps()` will return a dictionary of literals, comprehensions, etc.-->
-
-#### `pretty_print()`
+```python
+loop_counts = your_harvester.get_freq_map(node_types=[ast.While, ast.For])
+print(loop_counts)
+# stdout: {ast.While: 19, ast.For: 12}
+```
 
 #### `transform()`
 
-The ability to pass in a transform function and apply it to certain nodes is coming soon!
+Coming soon – the ability to pass in a transform function and apply it to certain nodes.
 
 #### `get_type(nodes)`
 
-Basic type inference coming soon!
+Coming soon – basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
 
 #### `get_pkg_tree(module_names=[])`
 
