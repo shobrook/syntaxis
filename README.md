@@ -1,21 +1,21 @@
 # saplings
 
-`saplings` is a simple library for searching, analyzing, and transforming [abstract syntax trees.](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
-* __Traversals:__ 
-  * Searching for nodes by type, id, attributes, or scope
-  * Generating frequency maps for specific nodes
-* __Analyses:__ 
+`saplings` is a simple library for searching, analyzing, and transforming [ASTs (abstract syntax trees.)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (`saplings`) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
+1. __Traversals:__
+  * Searching for nodes by `type`, `id`, `attribute`, or `scope`
+  * Generating `frequency maps` for specific nodes
+2. __Analyses:__
   * Applying custom transformations to the tree
   * Generating `PackageTree` objects that represent the tree's usage of imported Python packages
   * Performing basic type inference
 
 ## Install
 
-Compiled binaries are available for [every release,](https://github.com/shobrook/saplings/releases) and you can also install `saplings` with pip:
+Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with pip:
 
 `$ pip install saplings`
 
-Requires Python 3.0 or higher.
+Requires `Python 3.0` or higher.
 
 ## API
 
@@ -41,7 +41,7 @@ For example, the following code retrieves all list, set, and dictionary comprehe
 
 ```python
 comprehensions = your_harvester.search_by_type(
-     nodes=[ast.ListComp, ast.SetComp, ast.DictComp], 
+     nodes=[ast.ListComp, ast.SetComp, ast.DictComp],
      skip=[ast.FunctionDef]
 )
 print(comprehensions)
@@ -50,7 +50,7 @@ print(comprehensions)
 
 #### `get_freq_map(nodes=[])`
 
-Returns a dictionary mapping node types to their no. of occurences in the AST. `nodes` is a list of nodes to retrieve, but is an optional parameter. By default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
+Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, but is an optional parameter. By default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
 
 For example, the following code counts the number of `while` and `for` loops used in your AST.
 
@@ -82,8 +82,8 @@ Documentation coming soon!
 Documentation coming soon!
 <!--- flatten() instance method-->
 
-## Adding a Sapling
+## Contributing a Sapling
 
-If you've written an algorithm related to ASTs that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please try to adhere to the existing style. <!--Give actual instructions for where in the file you should contribute-->
+If you've written an AST-related algorithm that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please follow the guidelines in the [Contributing guide](https://github.com/alichtman/saplings/blob/master/CONTRIBUTING.md). <!--Give actual instructions for where in the file you should contribute-->
 
-If you've discovered a bug or have a feature request, create an [issue](https://github.com/shobrook/saplings/issues/new) and I'll take care of it!
+If you've discovered a bug or have a feature request, just create an [issue](https://github.com/shobrook/saplings/issues/new) and I'll take care of it!
