@@ -19,7 +19,7 @@ Requires Python 3.0 or higher.
 
 ## API
 
-To get started, import the `Harvester` object from `saplings` and initialize it with the root AST node for your program. The `Harvester` object holds your program's AST and instance methods for traversing and analyzing that tree (aka saplings).
+To get started, import the `Harvester` object from `saplings` and initialize it with the root node of your AST. The `Harvester` object holds your AST and exposes instance methods (aka saplings) for traversing and analyzing that tree.
 
 ```python
 import ast
