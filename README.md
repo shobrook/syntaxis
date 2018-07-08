@@ -19,7 +19,7 @@ Requires Python 3.0 or higher.
 
 ## API
 
-To get started, import the `Harvester` object from `saplings` and initialize it with the root AST node for your program. The `Harvester` object holds your program's AST and "saplings" (instance methods) for traversing and analyzing that tree. 
+To get started, import the `Harvester` object from `saplings` and initialize it with the root AST node for your program. The `Harvester` object holds your program's AST and instance methods for traversing and analyzing that tree (aka saplings).
 
 ```python
 import ast
@@ -31,35 +31,31 @@ your_harvester = Harvester(your_ast)
 
 ### `Harvester` Object
 
-`Harvester` holds the root node of your `AST` and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following instance methods are available:
+`Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following instance methods are available:
 
-#### `search_by_type(node_types, skip=[])`
+#### `search_by_type(nodes, skip=[])`
 
-Returns a list of nodes belonging to a particular class (or classes). The `node_types` parameter is the list of node classes to retrieve, and the `skip` parameter is a list of subtrees (node classes) to skip in the traversal.
+Returns a list of nodes belonging to a particular class (or classes). `nodes` is a list of node classes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal.
 
 For example, the following code retrieves all list, set, and dictionary comprehension nodes from your AST, but skips all nodes contained in functions.
 
 ```python
 comprehensions = your_harvester.search_by_type(
-     node_types=[ast.ListComp, ast.SetComp, ast.DictComp], 
+     nodes=[ast.ListComp, ast.SetComp, ast.DictComp], 
      skip=[ast.FunctionDef]
 )
 print(comprehensions)
 # stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
 ```
 
-#### `search_by_id(node_ids, skip=[])`
+#### `get_freq_map(nodes=[])`
 
-Returns a list of `ast.Name` nodes with particular ids. The `node_ids` parameter is the list of ids to search for. 
-
-#### `get_freq_map_by_id(node_types=[], node_ids=[])`
-
-Returns a dictionary mapping node types (or ids) to their no. of occurences in the AST. You can either use `node_types`, `node_ids`, or both parameters to define the list of nodes to retrieve. Both parameters are also optional, and by default `get_freq_maps()` will return a dictionary containing all nodes and their frequencies.
+Returns a dictionary mapping node types to their no. of occurences in the AST. `nodes` is a list of nodes to retrieve, but is an optional parameter. By default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
 
 For example, the following code counts the number of `while` and `for` loops used in your AST.
 
 ```python
-loop_counts = your_harvester.get_freq_map(node_types=[ast.While, ast.For])
+loop_counts = your_harvester.get_freq_map(nodes=[ast.While, ast.For])
 print(loop_counts)
 # stdout: {ast.While: 19, ast.For: 12}
 ```
@@ -88,6 +84,6 @@ Documentation coming soon!
 
 ## Contributing
 
-If you've written an algorithm related to ASTs that isn't included in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please try to adhere to the existing style. <!--Give actual instructions for where in the file you should contribute-->
+If you've written an algorithm related to ASTs that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please try to adhere to the existing style. <!--Give actual instructions for where in the file you should contribute-->
 
 If you've discovered a bug or have a feature request, create an [issue](https://github.com/shobrook/saplings/issues/new) and I'll take care of it!
