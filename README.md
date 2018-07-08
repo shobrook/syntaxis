@@ -1,9 +1,9 @@
 # saplings
 
-`saplings` is a simple library for searching, analyzing, and transforming [ASTs (abstract syntax trees.)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (`saplings`) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
+saplings is a simple library for searching, analyzing, and transforming [Abstract Syntax Trees (ASTs).](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
 1. __Traversals:__
-  * Searching for nodes by `type`, `id`, `attribute`, or `scope`
-  * Generating `frequency maps` for specific nodes
+  * Searching for nodes by type, id, attribute, or scope
+  * Generating frequency maps for specific nodes
 2. __Analyses:__
   * Applying custom transformations to the tree
   * Generating `PackageTree` objects that represent the tree's usage of imported Python packages
@@ -11,11 +11,11 @@
 
 ## Install
 
-Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with pip:
+Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with `pip`:
 
 `$ pip install saplings`
 
-Requires `Python 3.0` or higher.
+Requires Python 3.0 or higher.
 
 ## API
 
@@ -82,7 +82,7 @@ Documentation coming soon!
 Documentation coming soon!
 <!--- flatten() instance method-->
 
-## Contributing a Sapling
+## Planting a Sapling
 
 If you've written an AST-related algorithm that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please follow the guidelines in the [Contributing guide](https://github.com/alichtman/saplings/blob/master/CONTRIBUTING.md). <!--Give actual instructions for where in the file you should contribute-->
 
