@@ -4,12 +4,13 @@
 * __Traversals:__
   * Searching for nodes by type, id, attribute, or scope
   * Generating frequency maps for specific nodes
-* __Analyses:__
   * Applying custom transformations to the tree
+* __Analyses:__
+  * Calculating [Halstead complexity metrics](https://en.wikipedia.org/wiki/Halstead_complexity_measures) like volume and difficulty
   * Generating `PackageTree` objects that represent the tree's usage of imported Python packages
   * Performing basic type inference
 
-## Install
+## Installation
 
 Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with pip:
 
@@ -48,9 +49,9 @@ print(comprehensions)
 # stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
 ```
 
-#### `get_freq_map(nodes=[])`
+#### `get_freq_map(nodes=[], skip=[])`
 
-Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, but is an optional parameter. By default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
+Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
 
 For example, the following code counts the number of `while` and `for` loops used in your AST.
 
@@ -60,13 +61,43 @@ print(loop_counts)
 # stdout: {ast.While: 19, ast.For: 12}
 ```
 
-#### `transform()`
+#### `transform(nodes, transformer=lambda node: node)`
 
-Coming soon – the ability to pass in a transform function and apply it to certain nodes.
+Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to, and the `transformer` parameter is a function that takes a node as input and returns a modified version. By default, `transformer` returns the input node unchanged.
+
+For example, the following code replaces the value of all strings in your AST with `"New String Value"`.
+
+```python
+def str_transformer(node):
+     node.s = "New String Value"
+     return node
+
+uniform_str_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
+```
+<!--You can also chain these functions-->
 
 #### `get_type(nodes)`
 
-Coming soon – basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
+Coming soon: basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
+
+#### `get_halstead_metric(metric_name)`
+
+Calculates and returns a Halstead complexity metric for the AST. `metric_name` is a string specifying the name of the metric to calculate. The following metrics are supported:
+* __Vocabulary:__ n = n<sub>1</sub> + n<sub>2</sub>
+* __Length:__ N = N<sub>1</sub> + N<sub>2</sub>
+* __Volume:__ V = N x log<sub>2</sub>n
+* __Difficulty:__ D = (n<sub>1</sub> / 2) x (N<sub>2</sub> / n<sub>2</sub>)
+* __Time:__ T = (D x V) / 18sec
+* __Bugs:__ B = V / 3000
+
+Where:
+* n<sub>1</sub> = no. of distinct operators
+* n<sub>2</sub> = no. of distinct operands
+* N<sub>1</sub> = total no. of operators
+* N<sub>2</sub> = total no. of operands
+
+__Difficulty__ is an estimate of how difficult the program is to understand. __Time__ is an estimate of how long it might take to write the program. __Bugs__ is an estimate of the no. of errors in the program.
+<!--For example,--> 
 
 #### `get_pkg_tree(module_names=[])`
 
@@ -80,7 +111,10 @@ Documentation coming soon!
 #### `flatten()`
 
 Documentation coming soon!
-<!--- flatten() instance method-->
+
+#### `to_dict()`
+
+Documentation coming soon!
 
 ## Planting a Sapling
 
