@@ -32,13 +32,13 @@ your_harvester = Harvester(your_ast)
 
 ### `Harvester` Object
 
-`Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following saplings are available:
+`Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following saplings are currently available:
 
 #### `search_by_type(nodes, skip=[]) -> List[ast.Node]`
 
 Returns a list of nodes belonging to a particular class (or classes). `nodes` is a list of node classes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal.
 
-For example, the following code retrieves all list, set, and dictionary comprehension nodes from your AST, but skips all nodes contained in functions.
+For example, the following code retrieves all list, set, and dictionary comprehension nodes from your AST, but skips nodes contained in functions.
 
 ```python
 comprehensions = your_harvester.search_by_type(
@@ -51,9 +51,9 @@ print(comprehensions)
 
 #### `get_freq_map(nodes=[], skip=[]) -> Dict[str, int]`
 
-Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
+Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequencies.
 
-For example, the following code counts the number of `while` and `for` loops used in your AST.
+For example, the following code counts the number of `while` and `for` loops present in your AST.
 
 ```python
 loop_counts = your_harvester.get_freq_map(nodes=[ast.While, ast.For])
@@ -65,11 +65,11 @@ print(loop_counts)
 
 Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to, and the `transformer` parameter is a function that takes a node as input and returns a modified version. By default, `transformer` returns the input node unchanged.
 
-For example, the following code replaces the value of all strings in your AST with `"New String Value"`.
+For example, the following code replaces the value of all strings in your AST with `"bananas"`.
 
 ```python
 def str_transformer(node):
-     node.s = "New String Value"
+     node.s = "bananas"
      return node
 
 uniform_str_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
@@ -96,7 +96,7 @@ Where:
 * N<sub>1</sub> = total no. of operators
 * N<sub>2</sub> = total no. of operands
 
-__Difficulty__ is an estimate of how difficult the program is to understand. __Time__ is an estimate of how long it might take to write the program. __Bugs__ is an estimate of the no. of errors in the program.
+__Difficulty__ is an estimate of how difficult the program is to understand, __time__ is an estimate of how long it might take to write the program, and the __bugs__ value is an estimate of the no. of errors in the program.
 <!--For example,--> 
 
 #### `get_pkg_tree(module_names=[]) -> PackageTree`
