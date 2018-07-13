@@ -34,7 +34,7 @@ your_harvester = Harvester(your_ast)
 
 `Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following saplings are available:
 
-#### `search_by_type(nodes, skip=[])`
+#### `search_by_type(nodes, skip=[]) -> List[ast.Node]`
 
 Returns a list of nodes belonging to a particular class (or classes). `nodes` is a list of node classes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal.
 
@@ -49,7 +49,7 @@ print(comprehensions)
 # stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
 ```
 
-#### `get_freq_map(nodes=[], skip=[])`
+#### `get_freq_map(nodes=[], skip=[]) -> Dict[str, int]`
 
 Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequences.
 
@@ -61,7 +61,7 @@ print(loop_counts)
 # stdout: {ast.While: 19, ast.For: 12}
 ```
 
-#### `transform(nodes, transformer=lambda node: node)`
+#### `transform(nodes, transformer=lambda node: node) -> ast.Node`
 
 Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to, and the `transformer` parameter is a function that takes a node as input and returns a modified version. By default, `transformer` returns the input node unchanged.
 
@@ -76,11 +76,11 @@ uniform_str_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_tra
 ```
 <!--You can also chain these functions-->
 
-#### `get_type(nodes)`
+#### `get_type(nodes) -> Dict[ast.Node, str]`
 
 Coming soon: basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
 
-#### `get_halstead_metric(metric_name)`
+#### `get_halstead_metric(metric_name) -> int`
 
 Calculates and returns a Halstead complexity metric for the AST. `metric_name` is a string specifying the name of the metric to calculate. The following metrics are supported:
 * __Vocabulary:__ n = n<sub>1</sub> + n<sub>2</sub>
@@ -99,7 +99,7 @@ Where:
 __Difficulty__ is an estimate of how difficult the program is to understand. __Time__ is an estimate of how long it might take to write the program. __Bugs__ is an estimate of the no. of errors in the program.
 <!--For example,--> 
 
-#### `get_pkg_tree(module_names=[])`
+#### `get_pkg_tree(module_names=[]) -> PackageTree`
 
 Documentation coming soon!
 <!--(See below for more details)-->
@@ -108,11 +108,11 @@ Documentation coming soon!
 
 Documentation coming soon!
 
-#### `flatten()`
+#### `flatten() -> PackageTree`
 
 Documentation coming soon!
 
-#### `to_dict()`
+#### `to_dict() -> Dict[str, Dict]`
 
 Documentation coming soon!
 
