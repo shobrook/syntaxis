@@ -1,6 +1,6 @@
 # saplings
 
-saplings is a simple library for searching, analyzing, and transforming [Abstract Syntax Trees (ASTs).](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
+`saplings` is a simple library for searching, analyzing, and transforming [Abstract Syntax Trees (ASTs).](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
 1. __Traversals:__
   * Searching for nodes by type, id, attribute, or scope
   * Generating frequency maps for specific nodes
@@ -11,7 +11,7 @@ saplings is a simple library for searching, analyzing, and transforming [Abstrac
 
 ## Install
 
-Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with `pip`:
+Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with pip:
 
 `$ pip install saplings`
 
