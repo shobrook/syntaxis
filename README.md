@@ -36,7 +36,7 @@ your_harvester = Harvester(your_ast)
 
 #### `find(nodes=[], skip=[]) -> List[ast.Node]`
 
-Returns a list of matching AST nodes. `nodes` is a list of node classes to retrieve and the `skip` parameter is a list of subtrees to skip in the traversal.<!--and the `all` parameter is a boolean indicating whether to return the first match or all matches.--> Both parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
+Returns a list of matching AST nodes. `nodes` is a list of node types to retrieve and the `skip` parameter is a list of subtrees to skip in the traversal.<!--and the `all` parameter is a boolean indicating whether to return the first match or all matches.--> Both parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
 
 ```python
 # Retrieves all list, set, and dictionary comprehension nodes 
