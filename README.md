@@ -120,6 +120,6 @@ Coming soon!
 
 ## Planting a Sapling
 
-If you've written an AST-related algorithm that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please follow the guidelines in the [Contributing guide](https://github.com/alichtman/saplings/blob/master/CONTRIBUTING.md). <!--Give actual instructions for where in the file you should contribute-->
+If you've written an AST-related algorithm that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please follow the guidelines in the [contributing guide.](https://github.com/shobrook/saplings/blob/master/CONTRIBUTING.md)
 
 If you've discovered a bug or have a feature request, just create an [issue](https://github.com/shobrook/saplings/issues/new) and I'll take care of it!
