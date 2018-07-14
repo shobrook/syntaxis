@@ -79,10 +79,6 @@ def str_transformer(node):
 apple_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
 ```
 
-#### `get_type(nodes) -> Dict[ast.Node, str]`
-
-Coming soon: basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
-
 #### `get_halstead(metric_name) -> float`
 
 Calculates and returns a Halstead complexity metric for the AST. `metric_name` is a string specifying the name of the metric to calculate. The following metrics are supported:
@@ -97,6 +93,10 @@ difficulty = your_harvester.get_halstead("difficulty")
 time = your_harvester.get_halstead("time")
 bugs = your_harvester.get_halstead("bugs")
 ```
+
+#### `get_type(nodes) -> Dict[ast.Node, str]`
+
+Coming soon: basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
 
 #### `get_pkg_tree(pkg_names=[]) -> PackageTree`
 
