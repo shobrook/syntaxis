@@ -34,16 +34,18 @@ your_harvester = Harvester(your_ast)
 
 `Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following saplings are currently available:
 
-#### `search_by_type(nodes, skip=[]) -> List[ast.Node]`
+#### `find(nodes=[], skip=[], all=False) -> List[ast.Node]`
 
-Returns a list of nodes belonging to a particular class (or classes). `nodes` is a list of node classes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal.
-
-For example, the following code retrieves all list, set, and dictionary comprehension nodes from your AST, but skips nodes contained in functions.
+Returns a list of matching AST nodes. `nodes` is a list of node classes to retrieve, `skip` is a list of subtrees to skip in the traversal, and the `all` parameter is a boolean indicating whether to return the first match or all matches. All parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
 
 ```python
-comprehensions = your_harvester.search_by_type(
+# Retrieves all list, set, and dictionary comprehension nodes 
+# from the AST, but skips nodes contained in functions
+
+comprehensions = your_harvester.find(
      nodes=[ast.ListComp, ast.SetComp, ast.DictComp],
-     skip=[ast.FunctionDef]
+     skip=[ast.FunctionDef],
+     all=True
 )
 print(comprehensions)
 # stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
@@ -51,70 +53,70 @@ print(comprehensions)
 
 #### `get_freq_map(nodes=[], skip=[]) -> Dict[str, int]`
 
-Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to retrieve, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default, `get_freq_map()` will return a dictionary containing all node types in the tree and their frequencies.
-
-For example, the following code counts the number of `while` and `for` loops present in your AST.
+Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to analyze, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default `get_freq_map()` will return a dictionary containing all node types in the tree and their frequencies.
 
 ```python
+# Counts the number of 'while' and 'for' loops present in the AST
+
 loop_counts = your_harvester.get_freq_map(nodes=[ast.While, ast.For])
 print(loop_counts)
 # stdout: {ast.While: 19, ast.For: 12}
 ```
 
-#### `transform(nodes, transformer=lambda node: node) -> ast.Node`
+#### `transform(nodes=[], transformer=lambda node: node) -> ast.Node`
 
-Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to, and the `transformer` parameter is a function that takes a node as input and returns a modified version. By default, `transformer` returns the input node unchanged.
-
-For example, the following code replaces the value of all strings in your AST with `"bananas"`.
+Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to, and the `transformer` parameter is a function that takes a node as input and returns a modified version. Both are optional, and by default `transform()` will return the root node of the original AST, unchanged.
 
 ```python
+# Replaces the value of all "banana" strings with "apple"
+
 def str_transformer(node):
-     node.s = "bananas"
+     if node.s == "banana":
+          node.s = "apple"
+     
      return node
 
-uniform_str_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
+apple_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
 ```
-<!--You can also chain these functions-->
 
 #### `get_type(nodes) -> Dict[ast.Node, str]`
 
 Coming soon: basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
 
-#### `get_halstead_metric(metric_name) -> int`
+#### `get_halstead(metric_name) -> float`
 
 Calculates and returns a Halstead complexity metric for the AST. `metric_name` is a string specifying the name of the metric to calculate. The following metrics are supported:
-* __Vocabulary:__ n = n<sub>1</sub> + n<sub>2</sub>
-* __Length:__ N = N<sub>1</sub> + N<sub>2</sub>
-* __Volume:__ V = N x log<sub>2</sub>n
-* __Difficulty:__ D = (n<sub>1</sub> / 2) x (N<sub>2</sub> / n<sub>2</sub>)
-* __Time:__ T = (D x V) / 18sec
-* __Bugs:__ B = V / 3000
+* __Volume:__ describes the implementation size of the program in mathematical bits
+* __Difficulty:__ estimates how error prone the program is
+* __Time:__ estimates how long it might take to write the program (in seconds)
+* __Bugs:__ estimates the number of errors in the program
 
-Where:
-* n<sub>1</sub> = no. of distinct operators
-* n<sub>2</sub> = no. of distinct operands
-* N<sub>1</sub> = total no. of operators
-* N<sub>2</sub> = total no. of operands
+```python
+volume = your_harvester.get_halstead("volume")
+difficulty = your_harvester.get_halstead("difficulty")
+time = your_harvester.get_halstead("time")
+bugs = your_harvester.get_halstead("bugs")
+```
 
-__Difficulty__ is an estimate of how difficult the program is to understand, __time__ is an estimate of how long it might take to write the program, and the __bugs__ value is an estimate of the no. of errors in the program.
-<!--For example,--> 
+#### `get_pkg_tree(pkg_names=[]) -> PackageTree`
 
-#### `get_pkg_tree(module_names=[]) -> PackageTree`
-
-Documentation coming soon!
-<!--(See below for more details)-->
+Coming soon!
 
 ### `PackageTree` Object
 
-Documentation coming soon!
+Coming soon!
 
 #### `flatten() -> PackageTree`
 
-Documentation coming soon!
+Coming soon!
 
 #### `to_dict() -> Dict[str, Dict]`
 
-Documentation coming soon!
+Coming soon!
+
+### Node Groups
+
+Coming soon!
 
 ## Planting a Sapling
 
