@@ -34,9 +34,9 @@ your_harvester = Harvester(your_ast)
 
 `Harvester` holds the root node of your AST and inherits from `ast.NodeVisitor`. Every traversal is depth-first by default. The following saplings are currently available:
 
-#### `find(nodes=[], skip=[], all=False) -> List[ast.Node]`
+#### `find(nodes=[], skip=[]) -> List[ast.Node]`
 
-Returns a list of matching AST nodes. `nodes` is a list of node classes to retrieve, `skip` is a list of subtrees to skip in the traversal, and the `all` parameter is a boolean indicating whether to return the first match or all matches. All parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
+Returns a list of matching AST nodes. `nodes` is a list of node classes to retrieve and the `skip` parameter is a list of subtrees to skip in the traversal.<!--and the `all` parameter is a boolean indicating whether to return the first match or all matches.--> Both parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
 
 ```python
 # Retrieves all list, set, and dictionary comprehension nodes 
@@ -44,8 +44,7 @@ Returns a list of matching AST nodes. `nodes` is a list of node classes to retri
 
 comprehensions = your_harvester.find(
      nodes=[ast.ListComp, ast.SetComp, ast.DictComp],
-     skip=[ast.FunctionDef],
-     all=True
+     skip=[ast.FunctionDef]
 )
 print(comprehensions)
 # stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
@@ -53,7 +52,7 @@ print(comprehensions)
 
 #### `get_freq_map(nodes=[], skip=[]) -> Dict[str, int]`
 
-Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to analyze, and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default `get_freq_map()` will return a dictionary containing all node types in the tree and their frequencies.
+Returns a dictionary mapping node types to their frequency of occurence in the AST. `nodes` is a list of nodes to analyze and the `skip` parameter is a list of subtrees to skip in the traversal. Both are optional, and by default `get_freq_map()` will return a dictionary containing all node types in the tree and their frequencies.
 
 ```python
 # Counts the number of 'while' and 'for' loops present in the AST
@@ -65,7 +64,7 @@ print(loop_counts)
 
 #### `transform(nodes=[], transformer=lambda node: node) -> ast.Node`
 
-Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to, and the `transformer` parameter is a function that takes a node as input and returns a modified version. Both are optional, and by default `transform()` will return the root node of the original AST, unchanged.
+Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to and the `transformer` parameter is a function that takes a node as input and returns a modified version. Both are optional, and by default `transform()` will return the root node of the original AST, unchanged.
 
 ```python
 # Replaces the value of all "banana" strings with "apple"
