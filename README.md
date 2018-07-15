@@ -79,19 +79,17 @@ def str_transformer(node):
 apple_tree = my_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
 ```
 
-#### `get_halstead(metric_name) -> float`
+#### `get_halstead(metric) -> float`
 
-Calculates and returns a Halstead complexity metric for the AST. `metric_name` is a string specifying the name of the metric to calculate. The following metrics are supported:
+Calculates and returns a Halstead complexity metric for the AST. `metric` is a string specifying the name of the metric to calculate. The following metrics are supported:
 * __Volume:__ describes the implementation size of the program in mathematical bits
-* __Difficulty:__ estimates how error prone the program is
-* __Time:__ estimates how long it might take to write the program (in seconds)
+* __Time:__ estimates how long it might take to write the program in seconds
 * __Bugs:__ estimates the number of errors in the program
 
 ```python
 # All possible method calls
 
 volume = my_harvester.get_halstead("volume")
-difficulty = my_harvester.get_halstead("difficulty")
 time = my_harvester.get_halstead("time")
 bugs = my_harvester.get_halstead("bugs")
 ```
