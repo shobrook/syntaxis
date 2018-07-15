@@ -1,6 +1,6 @@
 # saplings
 
-`saplings` is a simple library for searching, analyzing, and transforming [Abstract Syntax Trees (ASTs).](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
+`saplings` is a Python library for searching, analyzing, and transforming [Abstract Syntax Trees (ASTs).](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
 * __Traversals:__
   * Searching for nodes by type, id, attribute, or scope
   * Generating frequency maps for specific nodes
@@ -26,8 +26,9 @@ To get started, import the `Harvester` object from `saplings` and initialize it 
 import ast
 from saplings import Harvester
 
-your_ast = ast.parse("path/to/your_file.py")
-your_harvester = Harvester(your_ast)
+my_file = open("path/to/your_file.py", 'r').read()
+my_ast = ast.parse(my_file)
+my_harvester = Harvester(my_ast)
 ```
 
 ### `Harvester` Object
@@ -42,7 +43,7 @@ Returns a list of matching AST nodes. `nodes` is a list of node types to retriev
 # Retrieves all list, set, and dictionary comprehension nodes 
 # from the AST, but skips nodes contained in functions
 
-comprehensions = your_harvester.find(
+comprehensions = my_harvester.find(
      nodes=[ast.ListComp, ast.SetComp, ast.DictComp],
      skip=[ast.FunctionDef]
 )
@@ -57,8 +58,8 @@ Returns a dictionary mapping node types to their frequency of occurence in the A
 ```python
 # Counts the number of 'while' and 'for' loops present in the AST
 
-loop_counts = your_harvester.get_freq_map(nodes=[ast.While, ast.For])
-print(loop_counts)
+loop_freqs = my_harvester.get_freq_map(nodes=[ast.While, ast.For])
+print(loop_freqs)
 # stdout: {ast.While: 19, ast.For: 12}
 ```
 
@@ -75,7 +76,7 @@ def str_transformer(node):
      
      return node
 
-apple_tree = your_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
+apple_tree = my_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
 ```
 
 #### `get_halstead(metric_name) -> float`
@@ -87,10 +88,12 @@ Calculates and returns a Halstead complexity metric for the AST. `metric_name` i
 * __Bugs:__ estimates the number of errors in the program
 
 ```python
-volume = your_harvester.get_halstead("volume")
-difficulty = your_harvester.get_halstead("difficulty")
-time = your_harvester.get_halstead("time")
-bugs = your_harvester.get_halstead("bugs")
+# All possible method calls
+
+volume = my_harvester.get_halstead("volume")
+difficulty = my_harvester.get_halstead("difficulty")
+time = my_harvester.get_halstead("time")
+bugs = my_harvester.get_halstead("bugs")
 ```
 
 #### `get_type(nodes) -> Dict[ast.Node, str]`
