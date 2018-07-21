@@ -85,14 +85,13 @@ COMPREHENSIONS = [
 GENERATORS = [
     ast.GeneratorExp,
     ast.Yield,
-    ast.YielFrom
+    ast.YieldFrom
 ]
 
 STATEMENTS = [
     ast.Assign,
     ast.AnnAssign,
     ast.AugAssign,
-    ast.Print,
     ast.Delete,
     ast.Pass
 ]
@@ -109,7 +108,7 @@ EXCEPTION_HANDLING = [
 IMPORTS = [
     ast.Import,
     ast.ImportFrom,
-    ast.Alias
+    ast.alias
 ]
 
 CONTROL_FLOW = [
