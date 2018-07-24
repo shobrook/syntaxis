@@ -7,8 +7,7 @@
   * Applying custom transformations to the tree
 * __Analyses:__
   * Calculating [Halstead complexity metrics](https://en.wikipedia.org/wiki/Halstead_complexity_measures) like volume and difficulty
-  * Generating `PackageTree` objects that represent the tree's usage of imported Python packages
-  * Performing basic type inference
+  * Performing basic type inference (coming soon)
 
 ## Installation
 
@@ -40,7 +39,7 @@ my_harvester = Harvester(my_ast)
 Returns a list of matching AST nodes. `nodes` is a list of node types to retrieve and the `skip` parameter is a list of subtrees to skip in the traversal.<!--and the `all` parameter is a boolean indicating whether to return the first match or all matches.--> Both parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
 
 ```python
-# Retrieves all list, set, and dictionary comprehension nodes 
+# Retrieves all list, set, and dictionary comprehension nodes
 # from the AST, but skips nodes contained in functions
 
 comprehensions = my_harvester.find(
@@ -68,12 +67,12 @@ print(loop_freqs)
 Applies a user-defined transformation to specific nodes in the AST, and returns the root node of the modified AST. `nodes` is a list of nodes to apply the transformation to and the `transformer` parameter is a function that takes a node as input and returns a modified version. Both are optional, and by default `transform()` will return the root node of the original AST, unchanged.
 
 ```python
-# Replaces the value of all "banana" strings with "apple"
+# Replaces the value of all "olive" strings with "apple"
 
 def str_transformer(node):
-     if node.s == "banana":
+     if node.s == "olive":
           node.s = "apple"
-     
+
      return node
 
 apple_tree = my_harvester.transform(nodes=[ast.Str], transformer=str_transformer)
@@ -97,22 +96,6 @@ bugs = my_harvester.get_halstead("bugs")
 #### `get_type(nodes) -> Dict[ast.Node, str]`
 
 Coming soon: basic type inference powered by [MyPy's TypeChecker.](https://github.com/python/mypy/blob/master/mypy/checker.py)
-
-#### `get_pkg_tree(pkg_names=[]) -> PackageTree`
-
-Coming soon!
-
-### `PackageTree` Object
-
-Coming soon!
-
-#### `flatten() -> PackageTree`
-
-Coming soon!
-
-#### `to_dict() -> Dict[str, Dict]`
-
-Coming soon!
 
 ### Node Groups
 
