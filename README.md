@@ -1,4 +1,6 @@
-<img width="30%" src="./logo.png" />
+<p align="center"><img width="30%" src="./logo.png" /></p>
+
+##
 
 `saplings` is a Python library for searching, analyzing, and transforming [Abstract Syntax Trees (ASTs).](https://en.wikipedia.org/wiki/Abstract_syntax_tree) It provides some generic algorithms (saplings) that work with Python's built-in [ast](https://docs.python.org/3/library/ast.html) module. Each sapling belongs to one of two categories:
 * __Traversals:__
