@@ -155,8 +155,6 @@ class IdentifierNode(object):
 #######
 
 
-# I may have got a B in 225 but goddamnit I know my trees
-
 # Context management [DONE, untested]
 # Handling subscripts
 # Incorrect frequencies/over-counting
