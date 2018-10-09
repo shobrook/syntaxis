@@ -6,8 +6,8 @@ from codecs import open
 
 setup(
     name="saplings",
-    description="Library of generic algorithms for working with abstract syntax trees",
-    version="v1.0.5",
+    description="Library of algorithms and data structures for working with abstract syntax trees",
+    version="v2.0.5",
     packages=["saplings"],
     python_requires=">=3",
     url="https://github.com/shobrook/saplings",
