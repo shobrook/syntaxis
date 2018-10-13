@@ -138,24 +138,6 @@ ASYNC = [
     ast.AsyncWith
 ]
 
-SYNTAX_NODES = {
-    "Literals": LITERALS,
-    "Variables": VARIABLES,
-    "Unary Operations": UNARY_OPS,
-    "Binary Operations": BINARY_OPS,
-    "Boolean Operations": BOOLEAN_OPS,
-    "Comparisons": COMPARISONS,
-    "Miscellaneous Expressions": MISC_EXPRESSIONS,
-    "Subscripts": SUBSCRIPTS,
-    "Comprehensions": COMPREHENSIONS,
-    "Generators": GENERATORS,
-    "Statements": STATEMENTS,
-    "Exception Handling": EXCEPTION_HANDLING,
-    "Control Flow": CONTROL_FLOW,
-    "Functions/Classes": FUNCS_AND_CLASSES,
-    "Asynchronous Operations": ASYNC
-}
-
 BUILT_IN_FUNC_NAMES = [
     "abs",
     "all",
