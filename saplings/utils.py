@@ -26,7 +26,7 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     if isinstance(node, ast.Name): # x
         tokens.append((node.id, "instance"))
         return tokens[::-1]
-    elif isinstance(node, ast.Call): # TODO: Tokenize nested function calls
+    elif isinstance(node, ast.Call):
         tokenized_args = []
 
         for arg in node.args:
@@ -120,59 +120,24 @@ def find_matching_node(subtree, id, type_pattern, context=None):
         return node.id == id # No context given; ignore aliases, check IDs
 
     types = type_pattern.split('/')
-    matches = {
-        "primary": {tier: [] for tier in range(len(types))}, # Exact context matches
-        "secondary": {tier: [] for tier in range(len(types))} # Secondary context matches
-    }
-
+    exact_context_matches, inexact_context_matches = [], []
     for node in subtree.breadth_first():
-        if has_matching_alias(node, exact_match=True):
-            match_tier = "primary"
-        elif has_matching_alias(node, exact_match=False):
-            match_tier = "secondary"
-        else:
-            continue
+        if has_matching_alias(node, True):
+            match_batch = exact_context_matches
+        elif has_matching_alias(node, False):
+            match_batch = inexact_context_matches
+        else: continue
 
-        for type_tier, type in enumerate(types):
+        for tier, type in enumerate(types):
             if node.type == type: # Matching type
-                matches[match_tier][type_tier].append(node)
+                match_batch.append((tier, node))
 
     # TODO: Define rules for what should be returned
 
-    for tier, match in matches["primary"].items():
-        if match:
-            return match[0]
+    get_matches = lambda batch: [m[1] for m in sorted(batch, key=lambda m: m[0])]
+    matches = get_matches(exact_context_matches) + get_matches(inexact_context_matches)
 
-    for tier, match in matches["secondary"].items():
-        if match:
-            return match[0]
-
-    return None
-
-def preprocess_token(tokens):
-    """
-    Stringifies a node token and pulls its type.
-
-    Merges all subscript tokens into one string
-    (i.e. id + slice1 + slice2 + ...)
-    """
-
-    not_last_token = len(tokens) > 1
-    token_name, token_type = tokens[0]
-
-    # TODO: Handle subscripts
-    # QUESTION: Do subscripts even need to get handled in here?
-
-    # if not_last_token and tokens[1][1] == "subscript":
-    #     token_type = "subscript"
-    #     for next_token in tokens[1:]:
-    #         next_token_name, next_token_type = next_token
-    #         if next_token_type != "subscript":
-    #             break
-    #
-    #         token_name += next_token_name
-
-    return token_name, token_type
+    return matches[0] if matches else None
 
 def stringify_tokenized_nodes(tokens):
     stringified_tokens = ''
