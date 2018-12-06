@@ -8,16 +8,6 @@
 # AST Unparser: https://github.com/simonpercivall/astunparse
 # AST Utilities: https://github.com/mutpy/astmonkey
 
-# Rename "parse tree" to "API tree" and rename "context" to "scope"
-# Remove "function" nodes and keep only module, instance, and implicit nodes
-# Make _process_tokenized_nodes recursive
-# Inside functions, block searching parent contexts for nodes with aliases equivalent to the function parameter names (unless it's self)
-# Make sure dot-aliasing works properly
-# Add implicit nodes (implicit(1), implicit(2), ...)
-# Ignore imports with dots in front (i.e. `import .local_module` or `from .local_module import X`)
-# Infer whether return types of user-defined functions are package-related
-    # Create a field mapping user-defined function names to...
-
 
 #########
 # GLOBALS
@@ -26,145 +16,34 @@
 
 import ast
 import json
+import math
 from collections import defaultdict
 
 import utils
 
 
-##################
-# PARSE TREE NODES
-##################
+#########
+# HELPERS
+#########
 
 
-class Node(object):
-    def __init__(self, id, type="instance", context='', alias='', children=[]):
-        self.id, self.type = str(id), type
-        self.children = []
-        self.aliases = defaultdict(lambda: set())
-        self.dead_aliases = defaultdict(lambda: set())
-        self.count = 1
+# [] Handle For/While contexts
+# [] Handle assignments in Try/Except and If/Else and With contexts
+# [] Handle comprehensions and generator expressions
+# [] Handle List/Dict/Set/Tuple assignments
+# [] Infer input and return (or yield) types of user-defined functions (and classes)
+# [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
+# [] Get rid of the type/type/type/... schema for searching nodes
+# [] Debug the frequency analysis
 
-        if alias: self.add_alias(context, alias)
-        for child in children:
-            self.add_child(child)
-
-    def __repr__(self):
-        return self.id
-
-    def __iter__(self):
-        return iter(self.children)
-
-    def __eq__(self, node):
-        if isinstance(node, type(self)):
-            return self.id == node.id and self.type == node.type
-
-        return False
-
-    def __ne__(self, node):
-        return not self.__eq__(node)
-
-    ## Instance Methods ##
-
-    def increment_count(self):
-        self.count += 1
-
-    def change_type(self, new_type):
-        self.type = new_type
-
-    def add_alias(self, context, alias):
-        self.aliases[context] |= {str(alias)}
-
-    def del_alias(self, context, alias):
-        if context in self.aliases:
-            self.aliases[context].discard(str(alias))
-        else:
-            self.dead_aliases[context] |= {str(alias)}
-
-    def add_child(self, node):
-        for child in self.children:
-            if child == node: # Child already exists; update aliases
-                for context, aliases in node.aliases.items():
-                    self.aliases[context] |= aliases
-
-                return
-
-        self.children.append(node)
-
-    def depth_first(self):
-        yield self
-        for node in self:
-            yield from node.depth_first()
-
-    def breadth_first(self):
-        node_queue = [self]
-        while node_queue:
-            node = node_queue.pop(0)
-            yield node
-            for child in node.children:
-                node_queue.append(child)
-
-    def flatten(self):
-        paths = [([self.id], self.type)]
-
-        for node in self.children:
-            useable_paths = node.flatten()
-            for path in useable_paths:
-                paths.append(([self.id] + path[0], path[1]))
-
-        return paths
-
-    def to_dict(self, debug=True):
-        default = {
-            "id": self.id,
-            "type": self.type,
-            "count": self.count
-        }
-
-        listify_aliases = lambda alias_dict: {
-            ctx: list(aliases)
-        for ctx, aliases in alias_dict.items() if aliases} if debug else None
-
-        aliases = listify_aliases(self.aliases)
-        dead_aliases = listify_aliases(self.dead_aliases)
-        children = [child.to_dict(debug) for child in self.children]
-
-        if children and aliases:
-            return {**default, **{
-                "aliases": aliases,
-                "dead_aliases": dead_aliases,
-                "children": children
-            }}
-        elif children and not aliases:
-            return {**default, **{"children": children}}
-        elif not children and aliases:
-            return {**default, **{
-                "aliases": aliases,
-                "dead_aliases": dead_aliases
-            }}
-
-        return default
-
-
-##########
-# SAPLINGS
-##########
-
-
-class Saplings(ast.NodeTransformer):
+class APIForest(ast.NodeVisitor):
     def __init__(self, tree):
-        """
-        Initializes everyone for everything.
+        # IDEA: The entire context/aliasing system can be refactored such that
+        # the object holds a mapping from contexts to alive and dead nodes. This
+        # could make search more efficient and at the very least make this code
+        # easier to read.
 
-        @param tree: either the path to a Python file or an already parsed AST
-        for a Python file.
-        """
-
-        if isinstance(tree, ast.Module): # Already parsed Python AST
-            self.tree = tree
-        elif isinstance(tree, str): # Path to Python file
-            self.tree = ast.parse(open(tree, 'r').read())
-        else:
-            raise Exception # TODO: Create custom exception
+        self.tree = tree
 
         # OPTIMIZE: Turns AST into doubly-linked AST
         for node in ast.walk(self.tree):
@@ -172,26 +51,17 @@ class Saplings(ast.NodeTransformer):
                 child.parent = node
 
         self._context_stack = ["global"] # Keeps track of current context
-        self._parse_trees = [] # Holds root nodes of parse trees
+        self.dependency_trees = [] # Holds root nodes of API usage trees
 
-        self._call_table = {} # For holding user-defined funcs and classes
-        self._iterator_table = {} # For holding user-defined ListComps, etc.
-
-        self._generate_parse_tree = False
-
-        self._queried_nodes = [] # TODO: Figure out a better variable name
-        self._retrieved_nodes = []
-        self._freq_map = defaultdict(lambda: 0)
-        self._transformer = lambda node: node
-
-        self._method_to_loc_map = {} # Holds a mapping from method names to a LOC range
-        self._complexity = 1 # if off else 0
-        self._functions = []
-        self._classes = []
+        self._call_table = {} # For holding user-defined funcs/classes
+        self._comp_table = {} # For holding user-defined comprehensions/generator expressions
+        self._temp_aliases = {}
 
         self._context_to_string = lambda: '.'.join(self._context_stack)
 
-    ## Parse Tree Utilities ##
+        self.visit(self.tree)
+
+    ## Utilities ##
 
     def _recursively_process_tokens(self, tokens):
         """
@@ -229,9 +99,6 @@ class Saplings(ast.NodeTransformer):
             content, type = token
             token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
 
-            print("\nTOKEN ID:", token_id)
-            print("ORIGINAL TOKEN:", token)
-
             type_pattern = adjusted_type = "implicit"
             if type == "args":
                 adjusted_id = "call"
@@ -243,7 +110,7 @@ class Saplings(ast.NodeTransformer):
                 type_pattern = "instance/implicit/module"
 
             if not idx: # Beginning of iteration
-                for root in self._parse_trees:
+                for root in self.dependency_trees:
                     matching_node = utils.find_matching_node(
                         subtree=root,
                         id=token_id,
@@ -252,6 +119,7 @@ class Saplings(ast.NodeTransformer):
                     )
 
                     if matching_node: # Found base node, pushing to stack
+                        matching_node.increment_count()
                         node_stack.append(matching_node)
                         break
             elif node_stack: # Stack exists, continue pushing to it
@@ -263,9 +131,10 @@ class Saplings(ast.NodeTransformer):
                 )
 
                 if matching_node: # Found child node
+                    matching_node.increment_count()
                     node_stack.append(matching_node)
                 else: # No child node found, creating one
-                    child_node = Node(
+                    child_node = utils.Node(
                         id=adjusted_id,
                         type=adjusted_type,
                         context=curr_context,
@@ -274,8 +143,7 @@ class Saplings(ast.NodeTransformer):
 
                     node_stack[-1].add_child(child_node)
                     node_stack.append(child_node)
-            else: # Base token doesn't exist, abort processing
-                break
+            else: break # Base token doesn't exist, abort processing
 
         return node_stack
 
@@ -292,23 +160,40 @@ class Saplings(ast.NodeTransformer):
         val_matches = self._recursively_process_tokens(value)
 
         alias = utils.stringify_tokenized_nodes(tokenized_target)
-        add_alias = lambda tail: tail.add_alias(curr_context, alias)
-        del_alias = lambda tail: tail.del_alias(curr_context, alias)
+        add_alias = lambda node: node.add_alias(curr_context, alias)
+        del_alias = lambda node: node.del_alias(curr_context, alias)
+
+        is_temp_assignment = curr_context in self._temp_aliases
+        if is_temp_assignment:
+            temp_aliases = self._temp_aliases[curr_context]
 
         if targ_matches and val_matches: # Known node reassigned to known node
-            add_alias(val_matches[-1])
-            del_alias(targ_matches[-1])
+            targ_node, val_node = targ_matches[-1], val_matches[-1]
+
+            add_alias(val_node)
+            del_alias(targ_node)
+            if is_temp_assignment:
+                temp_aliases.append(lambda: add_alias(targ_node))
+                temp_aliases.append(lambda: del_alias(val_node))
         elif targ_matches and not val_matches: # Known node reassigned to unknown node
-            del_alias(targ_matches[-1])
+            targ_node = targ_matches[-1]
+
+            del_alias(targ_node)
+            if is_temp_assignment:
+                temp_aliases.append(lambda: add_alias(targ_node))
         elif not targ_matches and val_matches: # Unknown node assigned to known node
-            add_alias(val_matches[-1])
+            val_node = val_matches[-1]
+
+            add_alias(val_node)
+            if is_temp_assignment:
+                temp_aliases.append(lambda: del_alias(val_node))
 
     def _process_module(self, module, context, alias_root=True):
         """
         Takes the identifier for a module, sometimes a period-separated string
         of sub-modules, and searches the list of parse trees for a matching
         module. If no match is found, new module nodes are generated and
-        appended to self._parse_trees.
+        appended to self.dependency_trees.
 
         @param module: identifier for the module.
         @param context: context in which the module is imported.
@@ -323,7 +208,7 @@ class Saplings(ast.NodeTransformer):
         root_module = sub_modules[0]
         term_node = None
 
-        for root in self._parse_trees:
+        for root in self.dependency_trees:
             matching_module = utils.find_matching_node(
                 subtree=root,
                 id=root_module,
@@ -335,13 +220,13 @@ class Saplings(ast.NodeTransformer):
                 break
 
         if not term_node:
-            term_node = Node(
+            term_node = utils.Node(
                 id=root_module,
                 type="module",
                 context=context,
                 alias=root_module if alias_root else '' # For `from X import Y`
             )
-            self._parse_trees.append(term_node)
+            self.dependency_trees.append(term_node)
 
         for idx in range(len(sub_modules[1:])):
             sub_module = sub_modules[idx + 1]
@@ -357,7 +242,7 @@ class Saplings(ast.NodeTransformer):
             if matching_sub_module:
                 term_node = matching_sub_module
             else:
-                new_sub_module = Node(
+                new_sub_module = utils.Node(
                     id=sub_module,
                     type="instance",
                     context=context,
@@ -370,64 +255,44 @@ class Saplings(ast.NodeTransformer):
 
     ## Overloaded Methods ##
 
-    def generic_visit(self, node):
-        """
-        Overloaded ast.NodeTransformer.generic_visit function that
+    # @utils.context_manager
+    # def visit_Global(self, node):
+    #     # IDEA: Save pre-state of context_stack, set to ["global"],
+    #     # then set back to pre-state
+    #     return
 
-        @param node:
-
-        @return: either the original node or a modified version.
-        """
-
-        super().generic_visit(node)
-
-        # QUESTION: Why aren't these in their respective visitor methods?
-        if isinstance(node, ast.Try):
-            self._complexity += len(node.handlers) + len(node.orelse)
-        elif isinstance(node, ast.BoolOp):
-            self._complexity += len(node.values) - 1
-        elif isinstance(node, ast.With) or isinstance(node, ast.If) or isinstance(node, ast.IfExp) or isinstance(node, ast.AsyncWith):
-            self._complexity += 1
-        elif isinstance(node, ast.For) or isinstance(node, ast.While) or isinstance(node, ast.AsyncFor):
-            self._complexity += bool(node.orelse) + 1
-        elif isinstance(node, ast.comprehension):
-            self._complexity += len(node.ifs) + 1
-        elif isinstance(node, ast.Assert):
-            self._complexity += 1
-
-        # NOTE: Figure out how to handle lambda functions (see #68 in radon)
-
-        node_is_queried = any(isinstance(node, n) for n in self._queried_nodes)
-        if node_is_queried or not self._queried_nodes:
-            self._retrieved_nodes.append(node)
-            self._freq_map[type(node).__name__] += 1
-
-            # Applies a user-defined modification to the node
-            return ast.copy_location(self._transformer(node), node)
-
-        return node
-
-    # def visit_Global(self, node): # IDEA: Save pre-state of context_stack, set to ["global"], then set back to pre-state
-
+    # @utils.context_manager
     # def visit_Nonlocal(self, node):
+    #     return
 
-    @utils.context_manager("class")
+    @utils.context_manager
     def visit_ClassDef(self, node):
-        return
+        pass
 
-    @utils.context_manager("function")
+    @utils.context_manager
     def visit_FunctionDef(self, node):
-        self._method_to_loc_map[node.name] = list(range(node.lineno, utils.get_max_lineno(node.body[-1]) + 1))
-        return
+        pass
 
     def visit_AsyncFunctionDef(self, node):
-        return self.visit_FunctionDef(node)
+        self.visit_FunctionDef(node)
 
-    # @utils.context_manager("lambda")
+    # @utils.context_manager(False)
     # def visit_Lambda(self, node):
     #     return
 
-    @utils.visitor
+    @utils.context_manager
+    def visit_If(self, node):
+        pass
+
+    @utils.context_manager
+    def visit_Try(self, node):
+        pass
+
+    @utils.context_manager
+    def visit_ExceptHandler(self, node):
+        pass
+
+    @utils.visitor(True)
     def visit_Import(self, node):
         curr_context = self._context_to_string()
         for module in node.names:
@@ -440,7 +305,7 @@ class Saplings(ast.NodeTransformer):
 
             module_leaf_node.add_alias(curr_context, alias)
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_ImportFrom(self, node):
         curr_context = self._context_to_string()
         module_node = self._process_module(
@@ -462,14 +327,14 @@ class Saplings(ast.NodeTransformer):
                     break
 
             if not child_exists:
-                module_node.add_child(Node(
+                module_node.add_child(utils.Node(
                     id=alias.name,
                     type="instance",
                     context=curr_context,
                     alias=alias_id
                 ))
 
-    @utils.visitor # TEMP: False
+    @utils.visitor(visit_children=False) # QUESTION: Should be False?
     def visit_Assign(self, node):
         curr_context = self._context_to_string()
 
@@ -479,7 +344,8 @@ class Saplings(ast.NodeTransformer):
         else:
             values = utils.recursively_tokenize_node(node.value, [])
 
-        for target in node.targets:
+        targets = node.targets if hasattr(node, "targets") else (node.target)
+        for target in targets:
             if isinstance(target, ast.Tuple):
                 for idx, elt in enumerate(target.elts):
                     if isinstance(values, tuple):
@@ -492,12 +358,16 @@ class Saplings(ast.NodeTransformer):
             else:
                 self._process_assignment(target, values)
 
-    @utils.visitor
+    @utils.visitor(visit_children=False)
+    def visit_AnnAssign(self, node):
+        self.visit_Assign(node)
+
+    @utils.visitor(True)
     def visit_Call(self, node):
         tokens = utils.recursively_tokenize_node(node, [])
         nodes = self._recursively_process_tokens(tokens)
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Attribute(self, node):
         # You could try searching up the node.parent.parent... path to find
         # out if attribute is inside a call node. If it is, let the call visiter
@@ -510,46 +380,187 @@ class Saplings(ast.NodeTransformer):
         tokens = utils.recursively_tokenize_node(node, [])
         nodes = self._recursively_process_tokens(tokens)
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Subscript(self, node):
         pass
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_comprehension(self, node):
         pass
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Dict(self, node):
         pass
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_List(self, node):
         pass
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Tuple(self, node):
         pass
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Set(self, node):
         pass
 
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Compare(self, node):
         pass
 
-    @utils.visitor
-    def visit_IfExp(self, node):
-        pass
-
-    @utils.visitor
+    @utils.visitor(True)
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Del):
             pass  # TODO: Delete alias from tree
         elif isinstance(node.ctx, ast.Load):
-            pass  # TODO: Increment count of node
+            pass  # TODO: Increment count of node (beware of double counting)
 
-    ## Public Methods (i.e. saplings) ##
+class HalsteadMetrics(ast.NodeVisitor): # Based on Radon source: [LINK]
+    def __init__(self, context=None):
+        # TODO: Ensure you're counting from all sources of operators/operands
+        self.operators_seen = set()
+        self.operands_seen = set()
+        self.operators = 0
+        self.operands = 0
+
+        self.context = context
+        self.function_metrics = []
+
+        self._get_name = lambda obj: obj.__class__.__name__
+
+        self.distinct_operands = lambda: len(self.operands_seen) if self.operands_seen else 1
+        self.distinct_operators = lambda: len(self.operators_seen) if self.operators_seen else 1
+
+    ## Overloaded Methods ##
+
+    @utils.dispatch
+    def visit_BinOp(self, node):
+        return (1, 2, (self._get_name(node.op),), (node.left, node.right))
+
+    @utils.dispatch
+    def visit_UnaryOp(self, node):
+        return (1, 1, (self._get_name(node.op),), (node.operand,))
+
+    @utils.dispatch
+    def visit_BoolOp(self, node):
+        return (1, len(node.values), (self._get_name(node.op),), node.values)
+
+    @utils.dispatch
+    def visit_AugAssign(self, node):
+        return (1, 2, (self._get_name(node.op),), (node.target, node.value))
+
+    @utils.dispatch
+    def visit_Compare(self, node):
+        return (len(node.ops), len(node.comparators) + 1,
+                map(self._get_name, node.ops), node.comparators + [node.left])
+
+    def visit_FunctionDef(self, node):
+        func_metrics = HalsteadMetrics(node.name)
+
+        for child in node.body:
+            metrics = HalsteadMetrics(node.name)
+            metrics.visit(child)
+
+            self.operators += metrics.operators
+            self.operands += metrics.operands
+            self.operators_seen.update(metrics.operators_seen)
+            self.operands_seen.update(metrics.operands_seen)
+
+            func_metrics.operators += metrics.operators
+            func_metrics.operands += metrics.operands
+            func_metrics.operators_seen.update(metrics.operators_seen)
+            func_metrics.operands_seen.update(metrics.operands_seen)
+
+        # Save the visited function visitor for later reference.
+        self.function_metrics.append(func_metrics)
+
+    ## Properties ##
+
+    @property
+    def vocabulary(self):
+        return self.distinct_operators() + self.distinct_operands()
+
+    @property
+    def length(self):
+        return self.operators + self.operands
+
+    @property
+    def calculated_length(self):
+        return self.distinct_operators() * math.log(self.distinct_operators(), 2) + self.distinct_operands() * math.log(self.distinct_operands(), 2)
+
+    @property
+    def volume(self):
+        return self.length * math.log(self.vocabulary, 2)
+
+    @property
+    def difficulty(self):
+        return (self.distinct_operators() / 2) * (self.operands / self.distinct_operands())
+
+    @property
+    def effort(self):
+        return self.difficulty * self.volume
+
+    @property
+    def time(self):
+        return self.effort / 18
+
+    @property
+    def bugs(self):
+        return self.volume / 3000
+
+class CyclomaticComplexity(ast.NodeVisitor):
+    def __init__(self, tree):
+        self.tree = tree
+
+class ProgramMetrics(ast.NodeVisitor):
+    def __init__(self, tree):
+        self.tree = tree
+
+        self.retrieved_nodes = []
+        self.freq_map = defaultdict(lambda: 0)
+        self.method_to_loc_map = {} # Holds mapping from method names to LOC range
+
+        self.halstead_metrics = HalsteadMetrics()
+        self.halstead_metrics.visit(self.tree)
+
+        self.visit(self.tree)
+
+    ## Overloaded Methods ##
+
+    def generic_visit(self, node):
+        self.retrieved_nodes.append(node)
+        self.freq_map[type(node).__name__] += 1
+
+        super().generic_visit(node)
+
+    @utils.visitor(visit_children=True)
+    def visit_FunctionDef(self, node):
+        self.method_to_loc_map[node.name] = range(node.lineno, utils.get_max_lineno(node.body[-1]) + 1)
+
+
+######
+# MAIN
+######
+
+
+class Saplings(object):
+    def __init__(self, tree):
+        """
+        @param tree: either the path to a Python file or an already parsed AST
+        for a Python file.
+        """
+
+        if isinstance(tree, ast.Module): # Already parsed Python AST
+            self.tree = tree
+        elif isinstance(tree, str): # Path to Python file
+            self.tree = ast.parse(open(tree, 'r').read())
+        else:
+            raise Exception # TODO: Create custom exception
+
+        self._api_forest = APIForest(self.tree).dependency_trees
+        self._program_metrics = ProgramMetrics(self.tree)
+
+    ## Public Methods ##
 
     def find(self, nodes=[]):
         """
@@ -561,31 +572,7 @@ class Saplings(ast.NodeTransformer):
         @return: list of matching AST nodes.
         """
 
-        self._generate_parse_tree = False
-        self._queried_nodes = nodes
-        self._retrieved_nodes = []
-
-        self.visit(self.tree)
-
-        return self._retrieved_nodes
-
-    def transform(self, nodes=[], transformer=lambda node: node):
-        """
-        Both are optional, and by default `transform()` will return the root
-        node of the original AST, unchanged.
-
-        @param nodes: list of node types to transform.
-        @param transformer: user-defined function that takes an AST node as
-        input and returns a modified version.
-
-        @return: root node of the transformed AST.
-        """
-
-        self._generate_parse_tree = False
-        self._queried_nodes = nodes
-        self._transformer = transformer
-
-        return self.visit(self.tree)
+        pass
 
     def get_freq_map(self, nodes=[]):
         """
@@ -599,62 +586,65 @@ class Saplings(ast.NodeTransformer):
         in the AST.
         """
 
-        self._generate_parse_tree = False
-        self._queried_nodes = nodes
-        self._freq_map = defaultdict(lambda: 0)
-
-        self.visit(self.tree)
-
-        return dict(self._freq_map)
-
-    def get_halstead(self, metric_name):
         pass
 
-    def get_complexity(self):
+    def get_halstead_metrics(self):
+        halstead_metrics = self._program_metrics.halstead_metrics
+        get_report = lambda metrics: {
+            "operands": metrics.operands,
+            "operators": metrics.operators,
+            "distinct_operands": metrics.distinct_operands(),
+            "distinct_operators": metrics.distinct_operators(),
+            "vocabulary": metrics.vocabulary,
+            "length": metrics.length,
+            "calculated_length": metrics.calculated_length,
+            "volume": metrics.volume,
+            "difficulty": metrics.difficulty,
+            "effort": metrics.effort,
+            "time": metrics.time,
+            "bugs": metrics.bugs
+        }
+
+        return {**get_report(halstead_metrics), **{
+            "function_level_metrics": {
+                func_metrics.context: get_report(func_metrics)
+            for func_metrics in halstead_metrics.function_metrics}
+        }}
+
+    def get_cyclomatic_complexity(self):
         pass
 
     def get_method_couplings(self):
         pass
 
     def get_method_to_loc_map(self):
-        self._method_to_loc_map = {}
-        self._generate_parse_tree = False
-        self.visit(self.tree)
+        pass
 
-        return self._method_to_loc_map
-
-    def get_api_usage_tree(self, flattened=False):
-        self._generate_parse_tree = True
-        self.visit(self.tree)
-
-        parse_tree = {} if flattened else []
-        for root in self._parse_trees:
+    def get_api_forest(self, flattened=False):
+        dep_trees = {} if flattened else []
+        for tree in self._api_forest:
             if flattened:
-                parse_tree[root.id] = {}
-                for path in root.flatten()[1:]:
-                    parse_tree[root.id]['.'.join(path[0])] = path[1]
+                dep_trees[tree.id] = {}
+                for path in tree.flatten()[1:]:
+                    dep_trees[tree.id]['.'.join(path[0])] = path[1]
             else:
                 # NOTE: 'True' for debugging purposes
-                parse_tree.append(root.to_dict(True))
+                dep_trees.append(tree.to_dict(True))
 
-        return parse_tree
-
+        return dep_trees
 
 if __name__ == "__main__":
     import sys
     sys.path = sys.path[1:] + ['']
-    from saplings import Harvester, Roots
 
     with open("./output.json", 'w') as output:
         # saplings = Saplings("./test.py")
-        # saplings = Saplings("./cases.py")
-        saplings = Saplings("./test2.py")
-        output.write(json.dumps(saplings.get_api_usage_tree()))
+        saplings = Saplings("./cases.py")
 
-    with open("./old_output.json", 'w') as old_output:
-        # file_ast = ast.parse(open("./test.py").read())
-        file_ast = ast.parse(open("./test2.py").read())
-        old_output.write(json.dumps(Roots(file_ast).to_dict(False)))
+        from pprint import pprint
+        # pprint(saplings.get_halstead_metrics())
+
+        output.write(json.dumps(saplings.get_api_forest()))
 
 
 ########################
