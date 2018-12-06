@@ -4,12 +4,263 @@
 
 
 import ast
+from collections import defaultdict
 
 
-######
-# MAIN
-######
+############
+# DECORATORS
+############
 
+
+def visitor(visit_children):
+    """
+    @param node: AST node being visited.
+    @param visit_children: flag for whether the node's children should be
+    traversed or not.
+
+    @return: AST node being visited (necessary for the ast.NodeTransformer
+    base class).
+    """
+
+    def outer_wrapper(func):
+        def wrapper(self, node):
+            func(self, node)
+
+            if visit_children:
+                self.generic_visit(node)
+
+        return wrapper
+
+    return outer_wrapper
+
+def context_manager(func):
+    """
+    Wrapper method around generic_visit that updates the context stack
+    before traversing a subtree, and pops from the stack when the traversal
+    is finished.
+    """
+
+    def wrapper(self, node):
+        func(self, node)
+
+        new_ctx = func.__name__.replace("visit_", '')
+        adj_ctx = [new_ctx, node.name] if hasattr(node, "name") else [new_ctx]
+        self._context_stack.append('#'.join(adj_ctx))
+
+        curr_ctx = self._context_to_string()
+        is_conditional = new_ctx in ("If", "Try", "ExceptHandler")
+        if is_conditional:
+            self._temp_aliases[curr_ctx] = []
+
+        self.generic_visit(node)
+
+        if is_conditional:
+            for alias_handler in self._temp_aliases[curr_ctx]:
+                alias_handler()
+
+        self._context_stack.pop()
+
+    return wrapper
+
+def dispatch(func):
+    def wrapper(self, node):
+        results = func(self, node)
+
+        types = {
+            ast.Num: 'n',
+            ast.Name: "id",
+            ast.Attribute: "attr"
+        }
+
+        self.operators += results[0]
+        self.operands += results[1]
+        self.operators_seen.update(results[2])
+        for operand in results[3]:
+            new_operand = getattr(operand, types.get(type(operand), ''), operand)
+            self.operands_seen.add((self.context, new_operand))
+
+        self.generic_visit(node) # super().generic_visit(node)
+
+    return wrapper
+
+
+######################
+# API FOREST UTILITIES
+######################
+
+
+class Node(object):
+    def __init__(self, id, type="instance", context='', alias='', children=[]):
+        """
+        Parse tree node constructor. Each node represents a feature in a
+        package's API. A feature is defined as an object, function, or variable
+        that can only be used by importing the package.
+
+        @param id: original identifier for the node.
+        @param type: type of node (either module, instance, or implicit).
+        @param context: scope in which the node is defined.
+        @param alias: alias of the node when it's first defined.
+        @param children: connected sub-nodes.
+        """
+
+        self.id, self.type = str(id), type
+        self.children = []
+        self.aliases = defaultdict(lambda: set())
+        self.dead_aliases = defaultdict(lambda: set()) # TODO: Explain this
+        self.count = 1
+
+        if alias: self.add_alias(context, alias)
+        for child in children:
+            self.add_child(child)
+
+    def __repr__(self):
+        return self.id
+
+    def __iter__(self):
+        return iter(self.children)
+
+    def __eq__(self, node):
+        if isinstance(node, type(self)):
+            return self.id == node.id and self.type == node.type
+
+        return False
+
+    def __ne__(self, node):
+        return not self.__eq__(node)
+
+    ## Instance Methods ##
+
+    def increment_count(self):
+        self.count += 1
+
+    def add_alias(self, context, alias):
+        self.aliases[context] |= {alias}
+
+    def del_alias(self, context, alias):
+        if context in self.aliases: # Alias exists in context
+            self.aliases[context].discard(alias)
+        else: # TODO: Explain this
+            self.dead_aliases[context] |= {alias}
+
+    def add_child(self, node):
+        for child in self.children:
+            if child == node: # Child already exists; update aliases
+                for context, aliases in node.aliases.items():
+                    self.aliases[context] |= aliases
+
+                return
+
+        self.children.append(node)
+
+    def depth_first(self):
+        yield self
+        for node in self:
+            yield from node.depth_first()
+
+    def breadth_first(self):
+        node_queue = [self]
+        while node_queue:
+            node = node_queue.pop(0)
+            yield node
+            for child in node.children:
+                node_queue.append(child)
+
+    def flatten(self):
+        paths = [([self.id], self.type)]
+
+        for node in self.children:
+            useable_paths = node.flatten()
+            for path in useable_paths:
+                paths.append(([self.id] + path[0], path[1]))
+
+        return paths
+
+    def to_dict(self, debug=True):
+        default = {
+            "id": self.id,
+            "type": self.type,
+            "count": self.count
+        }
+
+        listify_aliases = lambda alias_dict: {
+            ctx: list(aliases)
+        for ctx, aliases in alias_dict.items() if aliases} if debug else None
+
+        aliases = listify_aliases(self.aliases)
+        dead_aliases = listify_aliases(self.dead_aliases)
+        children = [child.to_dict(debug) for child in self.children]
+
+        if children and aliases:
+            return {**default, **{
+                "aliases": aliases,
+                "dead_aliases": dead_aliases,
+                "children": children
+            }}
+        elif children and not aliases:
+            return {**default, **{"children": children}}
+        elif not children and aliases:
+            return {**default, **{
+                "aliases": aliases,
+                "dead_aliases": dead_aliases
+            }}
+
+        return default
+
+def find_matching_node(subtree, id, type_pattern, context=None):
+    """
+    @param subtree:
+    @param id:
+    @param type_pattern: slash-separated string of node types to search for, in
+    order of match preference.
+    @param context:
+
+    @return: parse tree node.
+    """
+
+    def exists_in_context(aliases, context):
+        if context in aliases:
+            if id in aliases[context]:
+                return True
+
+        return False
+
+    def has_matching_alias(node, exact_match):
+        # Alias is defined in current context
+        if exists_in_context(node.aliases, context):
+            return True
+
+        # Pop down the context stack until an alias match is found
+        if not exact_match and context:
+            context_stack = context.split('.')
+            for idx in range(1, len(context_stack)):
+                adjusted_context = '.'.join(context_stack[:-idx])
+
+                if exists_in_context(node.dead_aliases, adjusted_context):
+                    return False # Node was monkey-patched in a parent context
+                elif exists_in_context(node.aliases, adjusted_context):
+                    return True # Node is well-defined in a parent context
+
+        return node.id == id # No context given; ignore aliases, check IDs
+
+    types = type_pattern.split('/')
+    exact_context_matches, inexact_context_matches = [], []
+    for node in subtree.breadth_first():
+        if has_matching_alias(node, True):
+            match_batch = exact_context_matches
+        elif has_matching_alias(node, False):
+            match_batch = inexact_context_matches
+        else: continue
+
+        for tier, type in enumerate(types):
+            if node.type == type: # Matching type
+                match_batch.append((tier, node))
+
+    # TODO: Define rules for what should be returned
+
+    get_matches = lambda batch: [m[1] for m in sorted(batch, key=lambda m: m[0])]
+    matches = get_matches(exact_context_matches) + get_matches(inexact_context_matches)
+
+    return matches[0] if matches else None
 
 def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     """
@@ -83,62 +334,6 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     else:
         return [] # TODO
 
-def find_matching_node(subtree, id, type_pattern, context=None):
-    """
-    @param subtree:
-    @param id:
-    @param type_pattern: slash-separated string of node types to search for, in
-    order of match preference.
-    @param context:
-
-    @return: parse tree node.
-    """
-
-    def exists_in_context(aliases, context):
-        if context in aliases:
-            if id in aliases[context]:
-                return True
-
-        return False
-
-    def has_matching_alias(node, exact_match):
-        # Alias is defined in current context
-        if exists_in_context(node.aliases, context):
-            return True
-
-        # Pop down the context stack until an alias match is found
-        if not exact_match and context:
-            context_stack = context.split('.')
-            for idx in range(1, len(context_stack)):
-                adjusted_context = '.'.join(context_stack[:-idx])
-
-                if exists_in_context(node.dead_aliases, adjusted_context):
-                    return False # Node was monkey-patched in a parent context
-                elif exists_in_context(node.aliases, adjusted_context):
-                    return True # Node is well-defined in a parent context
-
-        return node.id == id # No context given; ignore aliases, check IDs
-
-    types = type_pattern.split('/')
-    exact_context_matches, inexact_context_matches = [], []
-    for node in subtree.breadth_first():
-        if has_matching_alias(node, True):
-            match_batch = exact_context_matches
-        elif has_matching_alias(node, False):
-            match_batch = inexact_context_matches
-        else: continue
-
-        for tier, type in enumerate(types):
-            if node.type == type: # Matching type
-                match_batch.append((tier, node))
-
-    # TODO: Define rules for what should be returned
-
-    get_matches = lambda batch: [m[1] for m in sorted(batch, key=lambda m: m[0])]
-    matches = get_matches(exact_context_matches) + get_matches(inexact_context_matches)
-
-    return matches[0] if matches else None
-
 def stringify_tokenized_nodes(tokens):
     stringified_tokens = ''
     token_stack = []
@@ -156,60 +351,14 @@ def stringify_tokenized_nodes(tokens):
 
     return stringified_tokens
 
+
+#################
+# STATS UTILITIES
+#################
+
+
 def get_max_lineno(subtree):
     try:
         return max(n.lineno for n in ast.walk(subtree) if hasattr(n, "lineno"))
     except ValueError:
         return None
-
-def visitor(func):
-    """
-    @param node: AST node being visited.
-    @param callback: node visiter handler.
-    @param visit_children: flag for whether the node's children should be
-    traversed or not.
-
-    @return: AST node being visited (necessary for the ast.NodeTransformer
-    base class).
-    """
-
-    def wrapper(self, node):
-        if self._generate_parse_tree:
-            output = func(self, node)
-
-        if True: # visit_children:
-            self.generic_visit(node)
-
-        return node
-
-    return wrapper
-
-def context_manager(type):
-    """
-    Wrapper method around generic_visit that updates the context stack
-    before traversing a subtree, and pops from the stack when the traversal
-    is finished.
-
-    @param context: name of new context.
-    @param subtree: root node of subtree to traverse.
-    """
-
-    def real_context_manager(func):
-        def wrapper(self, node):
-            output = func(self, node)
-
-            self._context_stack.append('#'.join([type, node.name]))
-            self.generic_visit(node)
-            self._context_stack.pop()
-
-            return node
-
-        return wrapper
-
-    return real_context_manager
-
-def sapling():
-    def wrapper():
-        pass
-
-    return wrapper
