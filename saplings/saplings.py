@@ -1,14 +1,3 @@
-#######
-# NOTES
-#######
-
-
-# AST to JSON: https://github.com/fpoli/python-astexport
-# AST Parser that's version-agnostic: https://github.com/serge-sans-paille/gast
-# AST Unparser: https://github.com/simonpercivall/astunparse
-# AST Utilities: https://github.com/mutpy/astmonkey
-
-
 #########
 # GLOBALS
 #########
@@ -118,16 +107,18 @@ class Saplings(object):
 
         return dep_trees
 
+# TODO: Add NetworkX viz functionality
+
 if __name__ == "__main__":
     import sys
     sys.path = sys.path[1:] + ['']
 
     with open("./output.json", 'w') as output:
-        saplings = Saplings("./test.py")
-        # saplings = Saplings("./cases.py")
+        # saplings = Saplings("./test.py")
+        saplings = Saplings("./cases.py")
 
         from pprint import pprint
-        pprint(saplings._program_metrics.method_deps)
+        # pprint(saplings._program_metrics.method_deps)
         # pprint(saplings.get_halstead_metrics())
 
         output.write(json.dumps(saplings.get_api_forest()))
