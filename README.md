@@ -1,4 +1,7 @@
-<p align="center"><img width="30%" src="./logo.png" /></p>
+<h1 align="center">
+  <img width="30%" src="./logo.png" />
+  <br />
+</h1>
 
 ---
 
