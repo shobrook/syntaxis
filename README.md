@@ -3,8 +3,6 @@
   <br />
 </h1>
 
----
-
 `saplings` is a static analysis library for Python, fit with tools for calculating various software metrics and analyzing [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree). Its most notable feature is an algorithm that mines all the ways in which imported packages<!--imported package APIs--> are used in a Python program, and visualizes their usage patterns as parse trees. <!--Mention some applications of this algorithm?-->Other features include:
 - Cyclomatic Complexity
 - Halstead Metrics
