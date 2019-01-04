@@ -1,3 +1,8 @@
+"""
+Most of this code was ripped from the radon project <LINK> and has been slightly
+refactored for clarity.
+"""
+
 #########
 # GLOBALS
 #########
@@ -5,12 +10,13 @@
 
 import ast
 import math
+from collections import defaultdict
 import utils
 
 
-#########
-# HELPERS
-#########
+######
+# MAIN
+######
 
 
 class HalsteadMetrics(ast.NodeVisitor): # Based on Radon source: [LINK]
@@ -136,6 +142,12 @@ class CyclomaticComplexity(ast.NodeVisitor):
         super().generic_visit(node)
 
     def visit_FunctionDef(self, node):
+        """
+        Function complexity is computed taking into account the following
+        factors: no. of decorators, complexity of the function body, and no. of
+        closures.
+        """
+
         closures = []
         body_complexity = 1
 
@@ -145,11 +157,9 @@ class CyclomaticComplexity(ast.NodeVisitor):
             closures.extend(visitor.functions)
             body_complexity += visitor.complexity
 
-
-######
-# MAIN
-######
-
+        self.functions.append({
+            ""
+        })
 
 class ProgramMetrics(ast.NodeVisitor):
     def __init__(self, tree):
@@ -159,10 +169,15 @@ class ProgramMetrics(ast.NodeVisitor):
         self.all_nodes = []
         self.freq_map = defaultdict(lambda: 0)
         self.method_to_loc_map = {} # Holds mapping from method names to LOC range
-        self.method_deps = defaultdict(lambda: [])
 
-        self.halstead_metrics = HalsteadMetrics()
-        self.halstead_metrics.visit(self.tree)
+        # self.halstead_metrics = HalsteadMetrics()
+        # self.halstead_metrics.visit(self.tree)
+
+        # Functional programming techniques
+        self.recursive_funcs = []
+        self.partial_applications = [] # Closures?
+        self.curried_funcs = []
+        self.funcs_with_callbacks = []
 
         self._context_to_string = lambda: '.'.join(self._context_stack)
 
@@ -187,7 +202,3 @@ class ProgramMetrics(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
-
-    def visit_Call(self, node):
-        func_name = node.func.id if hasattr(node.func, "id") else node.func.attr
-        self.method_deps[self._context_to_string()].append(func_name)
