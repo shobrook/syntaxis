@@ -41,14 +41,19 @@ def context_manager(func):
     """
 
     def wrapper(self, node):
-        func(self, node)
-
         new_ctx = func.__name__.replace("visit_", '')
         adj_ctx = [new_ctx, node.name] if hasattr(node, "name") else [new_ctx]
-        self._context_stack.append('#'.join(adj_ctx))
+        self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
+
+        func(self, node)
+
+        # Since we cannot know whether a conditional block (If, Elif, Else, Try,
+        # Except, Finally, While) evaluates at runtime, we assume it doesn't,
+        # and revert any assigments made once the block is exited.
 
         curr_ctx = self._context_to_string()
-        is_conditional = new_ctx in ("If", "Try", "ExceptHandler")
+        is_conditional = new_ctx in ("If", "Try", "ExceptHandler", "While")
+
         if is_conditional:
             self._temp_aliases[curr_ctx] = []
 
@@ -59,6 +64,13 @@ def context_manager(func):
                 alias_handler()
 
         self._context_stack.pop()
+
+    return wrapper
+
+def default_handler(func):
+    def wrapper(self, node):
+        tokens = recursively_tokenize_node(node, [])
+        nodes = self._recursively_process_tokens(tokens)
 
     return wrapper
 
@@ -309,6 +321,17 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
 
         tokens.append((slice, "subscript"))
         return recursively_tokenize_node(node.value, tokens)
+    elif isinstance(node, ast.Dict):
+        keys = [recursively_tokenize_node(n, []) for n in node.keys]
+        vals = [recursively_tokenize_node(n, []) for n in node.values]
+
+        tokens.append((zip(keys, vals), "hashmap"))
+        return tokens[::-1]
+    elif isinnstance(node, (ast.List, ast.Tuple, ast.Set)):
+        elts = [recursively_tokenize_node(n, []) for n in node.elts]
+
+        tokens.append((elts, "array"))
+        return tokens[::-1]
     elif isinstance(node, ast.ListComp):
         return [] # TODO
     elif isinstance(node, ast.GeneratorExp):
@@ -317,17 +340,7 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         return [] # TODO
     elif isinstance(node, ast.SetComp):
         return [] # TODO
-    elif isinstance(node, ast.Dict):
-        return [] # TODO
-    elif isinstance(node, ast.List):
-        return [] # TODO
-    elif isinstance(node, ast.Tuple):
-        return [] # TODO
-    elif isinstance(node, ast.Set):
-        return [] # TODO
     elif isinstance(node, ast.Lambda):
-        return [] # TODO
-    elif isinstance(node, ast.Compare):
         return [] # TODO
     elif isinstance(node, ast.IfExp):
         return [] # TODO
@@ -357,6 +370,7 @@ def stringify_tokenized_nodes(tokens):
 #################
 
 
+# OPTIMIZE: Redundant subtree traversal
 def get_max_lineno(subtree):
     try:
         return max(n.lineno for n in ast.walk(subtree) if hasattr(n, "lineno"))
