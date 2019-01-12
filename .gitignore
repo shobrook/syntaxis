@@ -1,3 +1,4 @@
 dist/*
 saplings/private/*
 node_modules/*
+*.pyc
