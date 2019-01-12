@@ -42,27 +42,15 @@ def context_manager(func):
 
     def wrapper(self, node):
         new_ctx = func.__name__.replace("visit_", '')
-        adj_ctx = [new_ctx, node.name] if hasattr(node, "name") else [new_ctx]
+        adj_ctx = [new_ctx, node.name] if hasattr(node, "name") and node.name else [new_ctx]
         self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
 
         func(self, node)
 
-        # Since we cannot know whether a conditional block (If, Elif, Else, Try,
-        # Except, Finally, While) evaluates at runtime, we assume it doesn't,
-        # and revert any assigments made once the block is exited.
-
         curr_ctx = self._context_to_string()
-        is_conditional = new_ctx in ("If", "Try", "ExceptHandler", "While")
-
-        if is_conditional:
-            self._temp_aliases[curr_ctx] = []
-
+        self._in_conditional = new_ctx in ("If", "Try", "ExceptHandler", "While")
         self.generic_visit(node)
-
-        if is_conditional:
-            for alias_handler in self._temp_aliases[curr_ctx]:
-                alias_handler()
-
+        self._in_conditional = False
         self._context_stack.pop()
 
     return wrapper
@@ -322,16 +310,18 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         tokens.append((slice, "subscript"))
         return recursively_tokenize_node(node.value, tokens)
     elif isinstance(node, ast.Dict):
-        keys = [recursively_tokenize_node(n, []) for n in node.keys]
-        vals = [recursively_tokenize_node(n, []) for n in node.values]
-
-        tokens.append((zip(keys, vals), "hashmap"))
-        return tokens[::-1]
-    elif isinnstance(node, (ast.List, ast.Tuple, ast.Set)):
-        elts = [recursively_tokenize_node(n, []) for n in node.elts]
-
-        tokens.append((elts, "array"))
-        return tokens[::-1]
+        # keys = [recursively_tokenize_node(n, []) for n in node.keys]
+        # vals = [recursively_tokenize_node(n, []) for n in node.values]
+        #
+        # tokens.append((zip(keys, vals), "hashmap"))
+        # return tokens[::-1]
+        return []
+    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        # elts = [recursively_tokenize_node(n, []) for n in node.elts]
+        #
+        # tokens.append((elts, "array"))
+        # return tokens[::-1]
+        return []
     elif isinstance(node, ast.ListComp):
         return [] # TODO
     elif isinstance(node, ast.GeneratorExp):

@@ -12,14 +12,21 @@ import utils
 ######
 
 
-# [] Handle For/While contexts
-# [] Handle assignments in Try/Except and If/Else and With contexts
-# [] Handle comprehensions and generator expressions
+# [] Handle For and With contexts
+# [X] Handle assignments in Try/Except/If/Else/While contexts
+# [] Handle comprehensions and generator expressions (ignore assignments, they're too hard)
 # [] Handle List/Dict/Set/Tuple assignments
 # [] Infer input and return (or yield) types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
 # [] Get rid of the type/type/type/... schema for searching nodes
 # [] Debug the frequency analysis
+
+# Store processed key/val pairs in a field that the assign handler can access
+    # Only care about first-level dicts/arrays, not nested in other nodes
+
+# Can't handle appends/dels b/c you don't know the prior size of the object
+
+# BUG: Can't handle [1,2,3, ...][0].foo()
 
 class APIForest(ast.NodeVisitor):
     def __init__(self, tree):
@@ -38,9 +45,8 @@ class APIForest(ast.NodeVisitor):
         self._context_stack = ["global"] # Keeps track of current context
         self.dependency_trees = [] # Holds root nodes of API usage trees
 
-        self._call_table = {} # For holding user-defined funcs/classes
-        self._comp_table = {} # For holding user-defined comprehensions/generator expressions
-        self._temp_aliases = {}
+        self._keyvals = [] # Stores processed key/val pairs for access by the assignment handler
+        self._in_conditional = False # Flag for whether inside conditional block or not
 
         self._context_to_string = lambda: '.'.join(self._context_stack)
 
@@ -70,13 +76,18 @@ class APIForest(ast.NodeVisitor):
             content, type = token
 
             adjunctive_content = []
+            hash_nested_content = lambda: hash(str(adjunctive_content)) if adjunctive_content else hash(str(content)) # hash() or id()?
             if type == "args":
                 for sub_tokens in content:
                     adjunctive_content.append(self._recursively_process_tokens(sub_tokens))
-                content = id(str(adjunctive_content)) if adjunctive_content else id(str(content))
+                content = hash_nested_content()
             elif type == "subscript":
                 adjunctive_content = self._recursively_process_tokens(content)
-                content = id(str(adjunctive_content)) if adjunctive_content else id(str(content))
+                content = hash_nested_content()
+            # elif type == "hashmap":
+            #     pass # TODO
+            # elif type == "array":
+            #     pass # TODO
 
             flattened_tokens.append((content, type))
 
@@ -141,39 +152,40 @@ class APIForest(ast.NodeVisitor):
         curr_context = self._context_to_string()
         tokenized_target = utils.recursively_tokenize_node(target, [])
 
-        targ_matches = self._recursively_process_tokens(tokenized_target)
-        val_matches = self._recursively_process_tokens(value)
+        targ_matches = self._recursively_process_tokens(tokenized_target) # LHS
+        val_matches = self._recursively_process_tokens(value) # RHS
 
         alias = utils.stringify_tokenized_nodes(tokenized_target)
         add_alias = lambda node: node.add_alias(curr_context, alias)
         del_alias = lambda node: node.del_alias(curr_context, alias)
 
-        is_temp_assignment = curr_context in self._temp_aliases
-        if targ_matches and val_matches: # Known node reassigned to known node
+        def handle_conditional_assignments(nodes=[]):
+            """
+            """
+
+            if not self._in_conditional:
+                return
+
+            outer_context = '.'.join(self._context_stack[:-1])
+            for node in nodes:
+                node.del_alias(outer_context, alias)
+
+        if targ_matches and val_matches: # Known node reassigned to known node (K2 = K1)
             targ_node, val_node = targ_matches[-1], val_matches[-1]
 
             add_alias(val_node)
             del_alias(targ_node)
-            if is_temp_assignment:
-                temp_aliases = self._temp_aliases[curr_context]
-                temp_aliases += [
-                    lambda: add_alias(targ_node),
-                    lambda: del_alias(val_node)
-                ]
-        elif targ_matches and not val_matches: # Known node reassigned to unknown node
+            handle_conditional_assignments([targ_node, val_node])
+        elif targ_matches and not val_matches: # Known node reassigned to unknown node (U1 = K1)
             targ_node = targ_matches[-1]
 
             del_alias(targ_node)
-            if is_temp_assignment:
-                temp_aliases = self._temp_aliases[curr_context]
-                temp_aliases.append(lambda: add_alias(targ_node))
-        elif not targ_matches and val_matches: # Unknown node assigned to known node
+            handle_conditional_assignments([targ_node])
+        elif not targ_matches and val_matches: # Unknown node assigned to known node (K2 = U1)
             val_node = val_matches[-1]
 
             add_alias(val_node)
-            if is_temp_assignment:
-                temp_aliases = self._temp_aliases[curr_context]
-                temp_aliases.append(lambda: del_alias(val_node))
+            handle_conditional_assignments([val_node])
 
     def _process_module(self, module, context, alias_root=True):
         """
@@ -269,21 +281,19 @@ class APIForest(ast.NodeVisitor):
 
     @utils.context_manager
     def visit_If(self, node):
-        """
-        Since we cannot know whether a conditional block (If, Elif, Else, Try,
-        Except, Finally, With) actually evaluates at runtime, we assume it
-        doesn't, and revert any assignments made once the block is exited.
-        """
-
-        pass
+        pass # TODO: Handle else/elif manually
 
     @utils.context_manager
     def visit_Try(self, node):
+        pass # TODO: Handle ExceptHandler manually
+
+    @utils.context_manager
+    def visit_ExceptHandler(self, node):
         pass
 
-    # @utils.context_manager
-    # def visit_ExceptHandler(self, node):
-    #     pass
+    @utils.context_manager
+    def visit_While(self, node):
+        pass
 
     # TODO: Ignore relative imports and * imports
 
@@ -329,7 +339,7 @@ class APIForest(ast.NodeVisitor):
                     alias=alias_id
                 ))
 
-    @utils.visitor(visit_children=False)
+    @utils.visitor(False)
     def visit_Assign(self, node):
         curr_context = self._context_to_string()
 
@@ -353,16 +363,19 @@ class APIForest(ast.NodeVisitor):
             else:
                 self._process_assignment(target, values)
 
-    @utils.visitor(visit_children=False)
+    @utils.visitor(False) # QUESTION: Needed when visit_Assign is already decorated?
     def visit_AnnAssign(self, node):
         self.visit_Assign(node)
 
-    @utils.visitor(True)
+    @utils.visitor(False)
+    @utils.default_handler
     def visit_Call(self, node):
         tokens = utils.recursively_tokenize_node(node, [])
+        print("Tokens:", tokens)
         nodes = self._recursively_process_tokens(tokens)
 
-    @utils.visitor(True)
+    @utils.visitor(False)
+    @utils.default_handler
     def visit_Attribute(self, node):
         # You could try searching up the node.parent.parent... path to find
         # out if attribute is inside a call node. If it is, let the call visiter
@@ -372,36 +385,12 @@ class APIForest(ast.NodeVisitor):
         # one ast.Load visitor. Look into this more, i.e. what gets covered by
         # ast.Load.
 
-        tokens = utils.recursively_tokenize_node(node, [])
-        nodes = self._recursively_process_tokens(tokens)
+        return
 
-    @utils.visitor(True)
+    @utils.visitor(False)
+    @utils.default_handler
     def visit_Subscript(self, node):
-        pass
-
-    @utils.visitor(True)
-    def visit_comprehension(self, node):
-        pass
-
-    @utils.visitor(True)
-    def visit_Dict(self, node):
-        pass
-
-    @utils.visitor(True)
-    def visit_List(self, node):
-        pass
-
-    @utils.visitor(True)
-    def visit_Tuple(self, node):
-        pass
-
-    @utils.visitor(True)
-    def visit_Set(self, node):
-        pass
-
-    @utils.visitor(True)
-    def visit_Compare(self, node):
-        pass
+        return
 
     @utils.visitor(True)
     def visit_Name(self, node):
@@ -409,3 +398,27 @@ class APIForest(ast.NodeVisitor):
             pass  # TODO: Delete alias from tree
         elif isinstance(node.ctx, ast.Load):
             pass  # TODO: Increment count of node (beware of double counting)
+
+    @utils.visitor(False)
+    @utils.default_handler
+    def visit_Dict(self, node):
+        return
+
+    @utils.visitor(False)
+    @utils.default_handler
+    def visit_List(self, node):
+        return
+
+    @utils.visitor(False)
+    @utils.default_handler
+    def visit_Tuple(self, node):
+        return
+
+    @utils.visitor(False)
+    @utils.default_handler
+    def visit_Set(self, node):
+        return
+
+    @utils.visitor(True)
+    def visit_comprehension(self, node):
+        return
