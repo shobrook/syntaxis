@@ -107,6 +107,189 @@ class Saplings(object):
 
         return dep_trees
 
+    @property
+    def literals(self):
+        return [
+            ast.Bytes,
+            ast.Num,
+            ast.Str,
+            ast.JoinedStr,
+            ast.List,
+            ast.Tuple,
+            ast.Set,
+            ast.Dict,
+            ast.Ellipsis,
+            ast.NameConstant
+        ]
+
+    @property
+    def variables(self):
+        return [ast.Name, ast.Load, ast.Store, ast.Del, ast.Starred]
+
+    @property
+    def unary_ops(self):
+        return [ast.UAdd, ast.USub, ast.Not, ast.Invert]
+
+    @property
+    def binary_ops(self):
+        return [
+            ast.Add,
+            ast.Sub,
+            ast.Mult,
+            ast.Div,
+            ast.FloorDiv,
+            ast.Mod,
+            ast.Pow,
+            ast.LShift,
+            ast.RShift,
+            ast.BitOr,
+            ast.BitXor,
+            ast.BitAnd,
+            ast.MatMult
+        ]
+
+    @property
+    def boolean_ops(self):
+        return [ast.And, ast.Or]
+
+    @property
+    def comparisons(self):
+        return [
+            ast.Compare,
+            ast.Eq,
+            ast.NotEq,
+            ast.Lt,
+            ast.LtE,
+            ast.Gt,
+            ast.GtE,
+            ast.Is,
+            ast.IsNot,
+            ast.In,
+            ast.NotIn
+        ]
+
+    @property
+    def misc_expressions(self):
+        return [ast.Call, ast.IfExp, ast.Attribute]
+
+    @property
+    def subscripts(self):
+        return [ast.Subscript, ast.Index, ast.Slice, ast.ExtSlice]
+
+    @property
+    def comprehensions(self):
+        return [ast.ListComp, ast.SetComp, ast.DictComp]
+
+    @property
+    def generators(self):
+        return [ast.GeneratorExp, ast.Yield, ast.YieldFrom]
+
+    @property
+    def statements(self):
+        return [ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete, ast.Pass]
+
+    @property
+    def exception_handling(self):
+        return [ast.Raise, ast.Assert, ast.Try, ast.ExceptHandler]
+
+    @property
+    def imports(self):
+        return [ast.Import, ast.ImportFrom, ast.alias]
+
+    @property
+    def control_flow(self):
+        return [ast.If, ast.For, ast.While, ast.Break, ast.Continue, ast.With]
+
+    @property
+    def funcs_and_classes(self):
+        return [
+            ast.ClassDef,
+            ast.FunctionDef,
+            ast.Lambda,
+            ast.arguments,
+            ast.arg,
+            ast.Return,
+            ast.Global,
+            ast.Nonlocal
+        ]
+
+    @property
+    def async(self):
+        return [ast.AsyncFunctionDef, ast.Await, ast.AsyncFor, ast.AsyncWith]
+
+    @property
+    def built_in_func_names(self):
+        return [
+            "abs",
+            "all",
+            "any",
+            "ascii",
+            "bin",
+            "bool",
+            "bytearray",
+            "bytes",
+            "callable",
+            "chr",
+            "classmethod",
+            "compile",
+            "complex",
+            "delattr",
+            "dict",
+            "dir",
+            "divmod",
+            "enumerate",
+            "eval",
+            "exec",
+            "filter",
+            "float",
+            "format",
+            "frozenset",
+            "getattr",
+            "globals",
+            "hasattr",
+            "hash",
+            "help",
+            "hex",
+            "id",
+            "input",
+            "int",
+            "isinstance",
+            "issubclass",
+            "iter",
+            "len",
+            "list",
+            "locals",
+            "map",
+            "max",
+            "memoryview",
+            "min",
+            "next",
+            "object",
+            "oct",
+            "open",
+            "ord",
+            "pow",
+            "print",
+            "property",
+            "range",
+            "repr",
+            "reversed",
+            "round",
+            "set",
+            "setattr",
+            "slice",
+            "sorted",
+            "staticmethod",
+            "str",
+            "sum",
+            "super",
+            "tuple",
+            "type",
+            "vars",
+            "zip",
+            "__import__"
+        ]
+
 # TODO: Add NetworkX viz functionality
 
 if __name__ == "__main__":
@@ -114,85 +297,11 @@ if __name__ == "__main__":
     sys.path = sys.path[1:] + ['']
 
     with open("./output.json", 'w') as output:
-        # saplings = Saplings("./test.py")
-        saplings = Saplings("./cases.py")
+        saplings = Saplings("./test.py")
+        # saplings = Saplings("./cases.py")
 
         from pprint import pprint
         # pprint(saplings._program_metrics.method_deps)
         # pprint(saplings.get_halstead_metrics())
 
         output.write(json.dumps(saplings.get_api_forest()))
-
-
-########################
-# FLOATING CODE SNIPPETS
-########################
-
-
-# def export_json(tree):
-#     return json.dumps(
-#         DictExportVisitor().visit(tree),
-#         sort_keys=True,
-#         separators=(',', ':')
-#     )
-#
-# class DictExportVisitor:
-#     def visit(self, node):
-#         method_name = "visit_" + type(node).__name__
-#         method = getattr(self, method_name, self.default_visit)
-#
-#         return method(node)
-#
-#     def default_visit(self, node):
-#         node_type = type(node).__name__
-#         args = {"node": node_type}
-#
-#         # Visit fields
-#         for field in node._fields:
-#             method_name = "visit_field_" + node_type + '_' + field
-#             method = getattr(self, method_name, self.default_visit_field)
-#
-#             args[field] = method(getattr(node, field))
-#
-#         # Visit attributes
-#         for attr in node._attributes:
-#             method_name = "visit_attribute_" + node_type + '_' + attr
-#             method = getattr(self, method_name, self.default_visit_field)
-#
-#             args[attr] = method(getattr(node, attr, None))
-#
-#         return args
-#
-#     def default_visit_field(self, field):
-#         if isinstance(field, ast.AST):
-#             return self.visit(field)
-#         elif isinstance(field, list) or isinstance(field, tuple):
-#             return [self.visit(f) for f in field]
-#
-#         return field
-#
-#     # Special visitors
-#
-#     def visit_str(self, field):
-#         return str(field)
-#
-#     def visit_Bytes(self, field):
-#         return str(field.s)
-#
-#     def visit_NoneType(self, field):
-#         return None
-#
-#     def visit_field_NameConstant_value(self, field):
-#         return str(field)
-#
-#     def visit_field_Num_n(self, field):
-#         if isinstance(field, int):
-#             return {"node": "int", "n": field, "n_str": str(field)}
-#         elif isinstance(field, float):
-#             return {"node": "float", "n": field}
-#         elif isinstance(field, complex):
-#             return {"node": "complex", "n": field.real, "i": field.imag}
-#
-# with open("./ast.json", 'w') as ast_viz:
-#     file_ast = ast.parse(open("./test.py").read())
-#     ast_viz.write(export_json(file_ast))
