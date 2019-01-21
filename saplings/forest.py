@@ -5,6 +5,7 @@
 
 import ast
 import utils
+from collections import defaultdict
 
 
 ######
@@ -12,19 +13,34 @@ import utils
 ######
 
 
+# [] Fix elif/else/except context handling
 # [] Handle For and With contexts
-# [X] Handle assignments in Try/Except/If/Else/While contexts
 # [] Handle comprehensions and generator expressions (ignore assignments, they're too hard)
-# [] Handle List/Dict/Set/Tuple assignments
+# [] Handle assignments to data structures
 # [] Infer input and return (or yield) types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
 # [] Get rid of the type/type/type/... schema for searching nodes
 # [] Debug the frequency analysis
 
-# Store processed key/val pairs in a field that the assign handler can access
-    # Only care about first-level dicts/arrays, not nested in other nodes
+# Handling Comprehensions #
+# - You don't know the length of the resulting data structure
+# - Say x = [bar(y) for y in z]; we can say that any instance of x[WHATEVER] corresponds to an instance of bar()
 
-# Can't handle appends/dels b/c you don't know the prior size of the object
+# Handling Functions #
+# - If a token is imported, and then a function with the same name is defined, delete the alias for that token
+# - Save defined function names and their return types in a field (search field when processing tokens)
+# - Is processing the input types of functions as simple as adding the parameter name as an alias for the input node,
+#   then calling self.visit() on the function node? You could only modify the input node and it's children, cuz everything
+#   else in the function body has already been processed.
+
+# Handling List/Dict/Tuple/Set Assignments #
+# - Only care about first-level data structures, not those nested in other nodes
+# - Store processed key/val pairs in a global that the assign handler can access
+# - In the assignment handler, check if parent node is data structure – if it is, call process_tokenized_node
+#   with an arg passed in that will write
+
+# When you delete an alias after reassignment, delete `alias` subscripts too. i.e. x = [1,2,3], then x is
+# reassigned, and then nodes with x[0] and x[1] as aliases won't get deleted but need to be
 
 # BUG: Can't handle [1,2,3, ...][0].foo()
 
@@ -45,8 +61,9 @@ class APIForest(ast.NodeVisitor):
         self._context_stack = ["global"] # Keeps track of current context
         self.dependency_trees = [] # Holds root nodes of API usage trees
 
-        self._keyvals = [] # Stores processed key/val pairs for access by the assignment handler
+        self._structs = [] # Stores processed key/val pairs for access by the assignment handler
         self._in_conditional = False # Flag for whether inside conditional block or not
+        self._conditional_assignment_handlers = defaultdict(lambda: [])
 
         self._context_to_string = lambda: '.'.join(self._context_stack)
 
@@ -150,6 +167,7 @@ class APIForest(ast.NodeVisitor):
         """
 
         curr_context = self._context_to_string()
+        parent_context = '.'.join(self._context_stack[:-1])
         tokenized_target = utils.recursively_tokenize_node(target, [])
 
         targ_matches = self._recursively_process_tokens(tokenized_target) # LHS
@@ -158,34 +176,33 @@ class APIForest(ast.NodeVisitor):
         alias = utils.stringify_tokenized_nodes(tokenized_target)
         add_alias = lambda node: node.add_alias(curr_context, alias)
         del_alias = lambda node: node.del_alias(curr_context, alias)
-
-        def handle_conditional_assignments(nodes=[]):
-            """
-            """
-
-            if not self._in_conditional:
-                return
-
-            outer_context = '.'.join(self._context_stack[:-1])
-            for node in nodes:
-                node.del_alias(outer_context, alias)
+        del_conditional_alias = lambda node: node.del_alias(parent_context, alias)
 
         if targ_matches and val_matches: # Known node reassigned to known node (K2 = K1)
             targ_node, val_node = targ_matches[-1], val_matches[-1]
 
             add_alias(val_node)
             del_alias(targ_node)
-            handle_conditional_assignments([targ_node, val_node])
-        elif targ_matches and not val_matches: # Known node reassigned to unknown node (U1 = K1)
+            if self._in_conditional: # QUESTION: Do you even need an _in_conditional field?
+                self._conditional_assignment_handlers[curr_context].append(
+                    lambda: map(del_conditional_alias, [targ_node, val_node])
+                )
+        elif targ_matches and not val_matches: # Known node reassigned to unknown node (K1 = U1)
             targ_node = targ_matches[-1]
 
             del_alias(targ_node)
-            handle_conditional_assignments([targ_node])
-        elif not targ_matches and val_matches: # Unknown node assigned to known node (K2 = U1)
+            if self._in_conditional:
+                self._conditional_assignment_handlers[curr_context].append(
+                    lambda: del_conditional_alias(targ_node)
+                )
+        elif not targ_matches and val_matches: # Unknown node assigned to known node (U1 = K1)
             val_node = val_matches[-1]
 
             add_alias(val_node)
-            handle_conditional_assignments([val_node])
+            if self._in_conditional:
+                self._conditional_assignment_handlers[curr_context].append(
+                    lambda: del_conditional_alias(val_node)
+                )
 
     def _process_module(self, module, context, alias_root=True):
         """
@@ -252,53 +269,127 @@ class APIForest(ast.NodeVisitor):
 
         return term_node
 
-    ## Overloaded Methods ##
+    ## Context Managers ##
 
-    # @utils.context_manager
+    # @utils.context_handler
     # def visit_Global(self, node):
     #     # IDEA: Save pre-state of context_stack, set to ["global"],
     #     # then set back to pre-state
     #     return
 
-    # @utils.context_manager
+    # @utils.context_handler
     # def visit_Nonlocal(self, node):
     #     return
 
-    @utils.context_manager
+    @utils.context_handler
     def visit_ClassDef(self, node):
         pass
 
-    @utils.context_manager
+    @utils.context_handler
     def visit_FunctionDef(self, node):
         pass
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
-    # @utils.context_manager(False)
+    # @utils.context_handler
     # def visit_Lambda(self, node):
     #     return
 
-    @utils.context_manager
+    ## Control Flow Managers ##
+
+    @utils.conditional_handler
     def visit_If(self, node):
-        pass # TODO: Handle else/elif manually
+        contexts = []
+        for else_node in node.orelse:
+            else_context = ''.join(["If", str(else_node.lineno)])
+            contexts.append('.'.join(self._context_stack + [else_context]))
+            self.visit_If(else_node)
 
-    @utils.context_manager
+        return contexts
+
+    @utils.conditional_handler
     def visit_Try(self, node):
-        pass # TODO: Handle ExceptHandler manually
+        contexts = []
+        for except_handler in node.handlers:
+            except_context = ''.join(["ExceptHandler", str(except_handler.lineno)])
+            contexts.append('.'.join(self._context_stack + [except_context]))
+            self.visit_ExceptHandler(except_handler)
 
-    @utils.context_manager
+        return contexts
+
+        # QUESTION: How to handle node.orelse and node.finalbody?
+
+    @utils.conditional_handler
     def visit_ExceptHandler(self, node):
-        pass
+        # TODO: Handle `name` assignments (i.e. except Exception as e)
+        return []
 
-    @utils.context_manager
+    @utils.conditional_handler
     def visit_While(self, node):
-        pass
+        return []
 
-    # TODO: Ignore relative imports and * imports
+    def visit_For(self, node):
+        curr_context = self._context_to_string()
 
-    @utils.visitor(True)
+        def del_aliases(target):
+            """
+            Deletes alias for target node in all contexts.
+            """
+
+            tokens = utils.recursively_tokenize_node(target, [])
+            alias = utils.stringify_tokenized_nodes(tokens)
+            nodes = self._recursively_process_tokens(tokens) # Add a NO INCREMENT flag
+
+            if not nodes:
+                return
+
+            nodes[-1].del_alias(curr_context, alias)
+
+        if isinstance(node.target, ast.Name):
+            del_aliases(node.target)
+        elif isinstance(node.target, ast.Tuple) or isinstance(node.target, ast.List):
+            map(del_aliases, node.target.elts)
+
+        tokens = utils.recursively_tokenize_node(node.iter, [])
+        self._recursively_process_tokens(tokens)
+
+        for body_node in [node.iter] + node.body + node.orelse:
+            try:
+                node_name = type(body_node).__name__
+                custom_visitor = getattr(self, ''.join(["visit_", node_name]))
+                custom_visitor(body_node)
+            except AttributeError:
+                self.generic_visit(body_node)
+
+        # QUESTION: How to handle node.orelse? Nodes in orelse are executed if
+        # the loop finishes normally, rather than via a break statement
+
+    def visit_withitem(self, node):
+        def get_nodes(n):
+            tokens = utils.recursively_tokenize_node(n, [])
+            alias = utils.stringify_tokenized_nodes(tokens)
+            nodes = self._recursively_process_tokens(tokens)
+
+            if not nodes:
+                return
+
+            return nodes[-1], alias
+
+        if node.optional_vars:
+            curr_context = self._context_to_string()
+
+            value_node, value_alias = get_nodes(node.context_expr)
+            target_node, target_alias = get_nodes(node.optional_vars) # Name, Tuple, or List
+
+            value_node.add_alias(curr_context, target_alias)
+            target_node.del_alias(curr_context, target_alias)
+
+    ## Aliasing Handlers ##
+
     def visit_Import(self, node):
+        # TODO: Ignore `import .X`
+
         curr_context = self._context_to_string()
         for module in node.names:
             alias = module.asname if module.asname else module.name
@@ -310,8 +401,12 @@ class APIForest(ast.NodeVisitor):
 
             module_leaf_node.add_alias(curr_context, alias)
 
-    @utils.visitor(True)
     def visit_ImportFrom(self, node):
+        # TODO: Ignore `from X import *`
+        
+        if node.level:
+            return
+
         curr_context = self._context_to_string()
         module_node = self._process_module(
             module=node.module,
@@ -339,7 +434,6 @@ class APIForest(ast.NodeVisitor):
                     alias=alias_id
                 ))
 
-    @utils.visitor(False)
     def visit_Assign(self, node):
         curr_context = self._context_to_string()
 
@@ -363,18 +457,16 @@ class APIForest(ast.NodeVisitor):
             else:
                 self._process_assignment(target, values)
 
-    @utils.visitor(False) # QUESTION: Needed when visit_Assign is already decorated?
     def visit_AnnAssign(self, node):
         self.visit_Assign(node)
 
-    @utils.visitor(False)
     @utils.default_handler
     def visit_Call(self, node):
         tokens = utils.recursively_tokenize_node(node, [])
-        print("Tokens:", tokens)
         nodes = self._recursively_process_tokens(tokens)
 
-    @utils.visitor(False)
+        return
+
     @utils.default_handler
     def visit_Attribute(self, node):
         # You could try searching up the node.parent.parent... path to find
@@ -387,38 +479,33 @@ class APIForest(ast.NodeVisitor):
 
         return
 
-    @utils.visitor(False)
     @utils.default_handler
     def visit_Subscript(self, node):
         return
 
-    @utils.visitor(True)
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Del):
             pass  # TODO: Delete alias from tree
         elif isinstance(node.ctx, ast.Load):
             pass  # TODO: Increment count of node (beware of double counting)
 
-    @utils.visitor(False)
+        return
+
     @utils.default_handler
     def visit_Dict(self, node):
         return
 
-    @utils.visitor(False)
     @utils.default_handler
     def visit_List(self, node):
         return
 
-    @utils.visitor(False)
     @utils.default_handler
     def visit_Tuple(self, node):
         return
 
-    @utils.visitor(False)
     @utils.default_handler
     def visit_Set(self, node):
         return
 
-    @utils.visitor(True)
     def visit_comprehension(self, node):
-        return
+        self.generic_visit(node) # TEMP
