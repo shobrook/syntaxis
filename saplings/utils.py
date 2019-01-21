@@ -12,28 +12,7 @@ from collections import defaultdict
 ############
 
 
-def visitor(visit_children):
-    """
-    @param node: AST node being visited.
-    @param visit_children: flag for whether the node's children should be
-    traversed or not.
-
-    @return: AST node being visited (necessary for the ast.NodeTransformer
-    base class).
-    """
-
-    def outer_wrapper(func):
-        def wrapper(self, node):
-            func(self, node)
-
-            if visit_children:
-                self.generic_visit(node)
-
-        return wrapper
-
-    return outer_wrapper
-
-def context_manager(func):
+def context_handler(func):
     """
     Wrapper method around generic_visit that updates the context stack
     before traversing a subtree, and pops from the stack when the traversal
@@ -46,12 +25,40 @@ def context_manager(func):
         self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
 
         func(self, node)
-
-        curr_ctx = self._context_to_string()
-        self._in_conditional = new_ctx in ("If", "Try", "ExceptHandler", "While")
         self.generic_visit(node)
+
+        self._context_stack.pop()
+
+    return wrapper
+
+def conditional_handler(func):
+    def wrapper(self, node):
+        new_ctx = func.__name__.replace("visit_", '')
+        self._context_stack.append(''.join([new_ctx, str(node.lineno)]))
+        self._in_conditional = True
+
+        body_nodes = [node.test] + node.body if hasattr(node, "test") else node.body
+        for body_node in body_nodes:
+            try:
+                node_name = type(body_node).__name__
+                custom_visitor = getattr(self, ''.join(["visit_", node_name]))
+                custom_visitor(body_node)
+            except AttributeError:
+                self.generic_visit(body_node)
+
+        contexts = [self._context_to_string()]
+
         self._in_conditional = False
         self._context_stack.pop()
+
+        additional_contexts = func(self, node)
+        contexts.extend(additional_contexts)
+
+        for context in contexts:
+            for handler in self._conditional_assignment_handlers[context]:
+                handler()
+
+            del self._conditional_assignment_handlers[context]
 
     return wrapper
 
@@ -249,7 +256,8 @@ def find_matching_node(subtree, id, type_pattern, context=None):
             match_batch = exact_context_matches
         elif has_matching_alias(node, False):
             match_batch = inexact_context_matches
-        else: continue
+        else:
+            continue
 
         for tier, type in enumerate(types):
             if node.type == type: # Matching type
