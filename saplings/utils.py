@@ -335,20 +335,18 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         # return tokens[::-1]
         return []
     elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-        elts = []
-        if hasattr(node, "elt"):
-            elts.append(recursively_tokenize_node(node.elt, []))
-        elif hasattr(node, "key") and hasattr(node, "value"):
-            elts.append(recursively_tokenize_node(node.key, []))
-            elts.append(recursively_tokenize_node(node.value, []))
-
-        iters, targets, ifs = [], [], []
+        token = []
         for generator in node.generators:
-            iters.append(recursively_tokenize_node(generator.iter, []))
-            targets.append(recursively_tokenize_node(generator.target, []))
-            # ifs.append(recursively_tokenize_node()) # TODO: Handle ifs
+            token.append((recursively_tokenize_node(generator.iter, []), "iterable"))
+            token.append((recursively_tokenize_node(generator.target, []), "target"))
+            # token.append((recursively_tokenize_node(), "if")) # TODO: Handle ifs
 
-        token = [(iters, "iterables"), (targets, "targets"), (elts, "elts")]
+        if hasattr(node, "elt"):
+            token.append((recursively_tokenize_node(node.elt, []), "elt"))
+        elif hasattr(node, "key") and hasattr(node, "value"):
+            token.append((recursively_tokenize_node(node.key, []), "elt"))
+            token.append((recursively_tokenize_node(node.value, []), "elt"))
+
         tokens.append((token, "comprehension"))
         return tokens[::-1]
     elif isinstance(node, ast.Lambda):
