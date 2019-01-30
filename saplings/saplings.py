@@ -48,7 +48,7 @@ class Saplings(object):
 
         pass
 
-    def get_freq_map(self, nodes=[]):
+    def get_freq_map(self, nodes=[], built_ins=False, skip=[]):
         """
         Both parameters are optional, and by default get_freq_map() will return
         a dictionary containing all node types in the tree and their
@@ -60,7 +60,19 @@ class Saplings(object):
         in the AST.
         """
 
-        pass
+        if built_ins:
+            func_map = defaultdict(lambda: 0)
+            for node in nodes:
+                func_id = ''
+                if hasattr(node.func, "id"):
+                    func_id = node.func.id
+                elif hasattr(node.func, "name"):
+                    func_id = node.func.name
+
+                if func_id in self.built_in_func_names:
+                    func_map[func_id] += 1
+
+            return dict(func_map)
 
     def get_halstead_metrics(self):
         halstead_metrics = self._program_metrics.halstead_metrics
@@ -297,7 +309,7 @@ if __name__ == "__main__":
     sys.path = sys.path[1:] + ['']
 
     with open("./output.json", 'w') as output:
-        saplings = Saplings("./test.py")
+        saplings = Saplings("../cases.py")
         # saplings = Saplings("./cases.py")
 
         from pprint import pprint
