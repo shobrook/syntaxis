@@ -13,11 +13,10 @@ from collections import defaultdict
 ######
 
 
-# [] Handle comprehensions and generator expressions (ignore assignments, they're too hard)
+# [] Remove "module" type from nodes; actually, remove all types
 # [] Handle assignments to data structures
 # [] Infer input and return types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
-# [] Get rid of the type/type/type/... schema for searching nodes
 # [] Debug the frequency analysis
 
 # Handling Functions #
@@ -26,17 +25,6 @@ from collections import defaultdict
 # - Is processing the input types of functions as simple as adding the parameter name as an alias for the input node,
 #   then calling self.visit() on the function node? You could only modify the input node and it's children, cuz everything
 #   else in the function body has already been processed.
-
-# Handling List/Dict/Tuple/Set Assignments #
-# - Only care about first-level data structures, not those nested in other nodes
-# - Store processed key/val pairs in a global that the assign handler can access (or, have _recursively_process_tokens return em)
-# - In the assignment handler, check if parent node is data structure – if it is, call process_tokenized_node
-#   with an arg passed in that will write
-
-# When you delete an alias after reassignment, delete `alias` subscripts too. i.e. x = [1,2,3], then x is
-# reassigned, and then nodes with x[0] and x[1] as aliases won't get deleted but need to be
-
-# BUG: Can't handle [1,2,3, ...][0].foo()
 
 # TODO: Handle function reassignments (and function declarations within conditionals)
 
@@ -57,7 +45,6 @@ class APIForest(ast.NodeVisitor):
         self._context_stack = ["global"] # Keeps track of current context
         self.dependency_trees = [] # Holds root nodes of API usage trees
 
-        self._structs = [] # Stores processed key/val pairs for access by the assignment handler
         self._in_conditional = False # Flag for whether inside conditional block or not
 
         # Holds functions that clear aliases manipulated inside a conditional block
@@ -88,6 +75,44 @@ class APIForest(ast.NodeVisitor):
         node_stack = []
         curr_context = self._context_to_string()
 
+        # BUG: Doesn't handle nested data structures
+        def handle_data_structs(content, type):
+            if type == "comprehension":
+                for sub_token in content:
+                    if sub_token[1] == "target":
+                        continue # TODO: Block search for targets when processing elts
+
+                    self._recursively_process_tokens(sub_token[0])
+
+                return True # TEMP: Return an alias map, or something
+            elif type == "array":
+                alias_map = {}
+                for idx, elmt in enumerate(content):
+                    elmt_nodes = self._recursively_process_tokens(elmt)
+                    if elmt_nodes:
+                        alias_map[str(idx)] = elmt_nodes
+
+                return alias_map
+            elif type == "hashmap":
+                alias_map = {}
+                for key, val in content:
+                    val_nodes = self._recursively_process_tokens(val)
+                    if len(key) == 1 and key[0][1] in ("str", "num"):
+                        alias_map[key[0][0]] = val_nodes
+                    else:
+                        self._recursively_process_tokens(key)
+
+                return alias_map
+
+            return None
+
+        # QUESTION: How to handle when a data struct. gets manipulated
+        # (appended to, popped from, etc.)?
+
+        if is_data_struct:
+            content, type = tokens[0]
+            return handle_data_structs(content, type)
+
         # Flattens nested tokens
         flattened_tokens = []
         for idx, token in enumerate(tokens): # QUESTION: Does this need to be in a separate loop?
@@ -97,31 +122,25 @@ class APIForest(ast.NodeVisitor):
                 for sub_tokens in content:
                     self._recursively_process_tokens(sub_tokens)
 
-                type, content = "call", "()"
+                content = "()"
             elif type == "subscript":
                 if len(content) == 1 and content[0][1] in ("str", "num"):
                     content = '[' + content[0][0] + ']'
                 else:
                     self._recursively_process_tokens(content)
                     content = "[]"
-            elif type == "comprehension":
-                # TODO: Say x = [foo(y) for y in z]. We can say that any
-                # instance of x[WHATEVER] corresponds to an instance of bar()
-
-                for sub_token in content:
-                    if sub_token[1] == "target":
-                        continue # TODO: Block search for targets when processing elts
-
-                    self._recursively_process_tokens(sub_token[0])
-
-                content = '' # QUESTION: This needed?
+            else:
+                nodes_in_structs = handle_data_structs(content, type)
+                if nodes_in_structs:
+                    content = ''
 
             flattened_tokens.append((content, type))
 
         for idx, token in enumerate(flattened_tokens):
             content, type = token
 
-            if type == "comprehension":
+            # BUG: Can't handle something like [1,2,3, ...][0].foo()
+            if type in ("comprehension", "array", "hashmap"):
                 break
 
             token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
@@ -172,12 +191,14 @@ class APIForest(ast.NodeVisitor):
         @param value: tokenized AST node on the right-hand-side of the assignment.
         """
 
+        is_data_struct = len(value) == 1 and value[0][1] in ("comprehension", "array", "hashmap")
+
         curr_context = self._context_to_string()
         parent_context = '.'.join(self._context_stack[:-1])
         tokenized_target = utils.recursively_tokenize_node(target, [])
 
         targ_matches = self._recursively_process_tokens(tokenized_target) # LHS
-        val_matches = self._recursively_process_tokens(value) # RHS
+        val_matches = self._recursively_process_tokens(value, is_data_struct=is_data_struct) # RHS
 
         alias = utils.stringify_tokenized_nodes(tokenized_target)
         add_alias = lambda node: node.add_alias(curr_context, alias)
@@ -191,6 +212,12 @@ class APIForest(ast.NodeVisitor):
             conditional_handler = lambda node: node.del_alias(parent_context, alias)
             wrapper = lambda: list(map(conditional_handler, nodes))
             self._conditional_handlers[curr_context].append(wrapper)
+
+        # TODO: When you delete an alias after reassignment, delete `alias`
+        # subscripts too. i.e. x = [1,2,3] then x is reassigned, and then nodes
+        # with x[0] and x[1] as aliases won't get deleted but need to be.
+
+        # TODO: Handle aliasing for is_data_struct case
 
         if targ_matches and val_matches: # Known node reassigned to known node (K2 = K1)
             targ_node, val_node = targ_matches[-1], val_matches[-1]
