@@ -13,11 +13,9 @@ from collections import defaultdict
 ######
 
 
-# [] Fix elif/else/except context handling
-# [] Handle For and With contexts
 # [] Handle comprehensions and generator expressions (ignore assignments, they're too hard)
 # [] Handle assignments to data structures
-# [] Infer input and return (or yield) types of user-defined functions (and classes)
+# [] Infer input and return types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
 # [] Get rid of the type/type/type/... schema for searching nodes
 # [] Debug the frequency analysis
@@ -25,6 +23,7 @@ from collections import defaultdict
 # Handling Comprehensions #
 # - You don't know the length of the resulting data structure
 # - Say x = [bar(y) for y in z]; we can say that any instance of x[WHATEVER] corresponds to an instance of bar()
+# - The 'x' in `for x in y` only has scope within the comprehension, and won't change anything in the outer scope
 
 # Handling Functions #
 # - If a token is imported, and then a function with the same name is defined, delete the alias for that token
@@ -35,7 +34,7 @@ from collections import defaultdict
 
 # Handling List/Dict/Tuple/Set Assignments #
 # - Only care about first-level data structures, not those nested in other nodes
-# - Store processed key/val pairs in a global that the assign handler can access
+# - Store processed key/val pairs in a global that the assign handler can access (or, have _recursively_process_tokens return em)
 # - In the assignment handler, check if parent node is data structure – if it is, call process_tokenized_node
 #   with an arg passed in that will write
 
@@ -43,6 +42,8 @@ from collections import defaultdict
 # reassigned, and then nodes with x[0] and x[1] as aliases won't get deleted but need to be
 
 # BUG: Can't handle [1,2,3, ...][0].foo()
+
+# TODO: Handle function reassignments (and function declarations within conditionals)
 
 class APIForest(ast.NodeVisitor):
     def __init__(self, tree):
@@ -63,22 +64,27 @@ class APIForest(ast.NodeVisitor):
 
         self._structs = [] # Stores processed key/val pairs for access by the assignment handler
         self._in_conditional = False # Flag for whether inside conditional block or not
-        self._conditional_assignment_handlers = defaultdict(lambda: [])
+
+        # Holds functions that clear aliases manipulated inside a conditional block
+        self._conditional_handlers = defaultdict(lambda: [])
 
         self._context_to_string = lambda: '.'.join(self._context_stack)
 
         self.visit(self.tree)
 
-    ## Utilities ##
+    ## Private Helpers ##
 
-    def _recursively_process_tokens(self, tokens):
+    def _recursively_process_tokens(self, tokens, no_increment=False, is_data_struct=False):
         """
-        Takes a list of tokens (types: instance, function, args, or subscript)
-        and searches for an equivalent nodes in each parse tree. Once the leaf
-        of the path of equivalent nodes has been reached, the algorithm creates
-        additional nodes and adds them to the parse tree.
+        This is the master function for appending to the API forest. Takes a
+        (potentially nested) list of token and type tuples and searches
+        for equivalent nodes in the API forest. Once the terminal node of a
+        path of equivalent nodes has been reached, additional nodes are created
+        and added as children to the terminal node.
 
         @param tokens: list of tokenized nodes, each as (token(s), type).
+        @param no_increment:
+        @param is_data_struct:
 
         @return: list of references to parse tree nodes corresponding to the
         tokens.
@@ -89,22 +95,20 @@ class APIForest(ast.NodeVisitor):
 
         # Flattens nested tokens
         flattened_tokens = []
-        for idx, token in enumerate(tokens):
+        for idx, token in enumerate(tokens): # QUESTION: Does this need to be in a separate loop?
             content, type = token
 
-            adjunctive_content = []
-            hash_nested_content = lambda: hash(str(adjunctive_content)) if adjunctive_content else hash(str(content)) # hash() or id()?
-            if type == "args":
+            if type == "call":
                 for sub_tokens in content:
-                    adjunctive_content.append(self._recursively_process_tokens(sub_tokens))
-                content = hash_nested_content()
+                    self._recursively_process_tokens(sub_tokens)
+
+                type, content = "call", "()"
             elif type == "subscript":
-                adjunctive_content = self._recursively_process_tokens(content)
-                content = hash_nested_content()
-            # elif type == "hashmap":
-            #     pass # TODO
-            # elif type == "array":
-            #     pass # TODO
+                if len(content) == 1 and content[0][1] in ("str", "num"):
+                    content = '[' + content[0][0] + ']'
+                else:
+                    self._recursively_process_tokens(content)
+                    content = "[]"
 
             flattened_tokens.append((content, type))
 
@@ -112,58 +116,51 @@ class APIForest(ast.NodeVisitor):
             content, type = token
             token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
 
-            type_pattern = adjusted_type = "implicit"
-            if type == "args":
-                adjusted_id = "call"
-            elif type == "subscript":
-                adjusted_id = "sub"
-            else:
-                adjusted_id = content
-                adjusted_type = "instance"
-                type_pattern = "instance/implicit/module"
-
             if not idx: # Beginning of iteration; find base token
                 for root in self.dependency_trees:
                     matching_node = utils.find_matching_node(
                         subtree=root,
                         id=token_id,
-                        type_pattern="instance/module/implicit",
+                        type_pattern="instance/module",
                         context=curr_context
                     )
 
                     if matching_node: # Found match for base token, pushing to stack
-                        matching_node.increment_count()
+                        if not no_increment:
+                            matching_node.increment_count()
                         node_stack.append(matching_node)
                         break
             elif node_stack: # Stack exists, continue pushing to it
                 matching_node = utils.find_matching_node(
                     subtree=node_stack[-1],
                     id=token_id,
-                    type_pattern=type_pattern,
+                    type_pattern="instance",
                     context=curr_context
                 )
 
                 if matching_node: # Found child node
-                    matching_node.increment_count()
+                    if not no_increment:
+                        matching_node.increment_count()
                     node_stack.append(matching_node)
                 else: # No child node found, creating one
                     child_node = utils.Node(
-                        id=adjusted_id,
-                        type=adjusted_type,
+                        id=content,
+                        type="instance",
                         context=curr_context,
                         alias=token_id
                     )
 
                     node_stack[-1].add_child(child_node)
                     node_stack.append(child_node)
-            else: break # Base token doesn't exist, abort processing
+            else: # Base token doesn't exist, abort processing
+                break
 
         return node_stack
 
     def _process_assignment(self, target, value):
         """
-        @param target:
-        @param value:
+        @param target: AST node on the left-hand-side of the assignment.
+        @param value: tokenized AST node on the right-hand-side of the assignment.
         """
 
         curr_context = self._context_to_string()
@@ -176,40 +173,39 @@ class APIForest(ast.NodeVisitor):
         alias = utils.stringify_tokenized_nodes(tokenized_target)
         add_alias = lambda node: node.add_alias(curr_context, alias)
         del_alias = lambda node: node.del_alias(curr_context, alias)
-        del_conditional_alias = lambda node: node.del_alias(parent_context, alias)
+
+        def del_conditional_aliases(nodes=[]):
+            # QUESTION: Do you even need an _in_conditional field?
+            if not self._in_conditional:
+                return
+
+            conditional_handler = lambda node: node.del_alias(parent_context, alias)
+            wrapper = lambda: list(map(conditional_handler, nodes))
+            self._conditional_handlers[curr_context].append(wrapper)
 
         if targ_matches and val_matches: # Known node reassigned to known node (K2 = K1)
             targ_node, val_node = targ_matches[-1], val_matches[-1]
 
             add_alias(val_node)
             del_alias(targ_node)
-            if self._in_conditional: # QUESTION: Do you even need an _in_conditional field?
-                self._conditional_assignment_handlers[curr_context].append(
-                    lambda: map(del_conditional_alias, [targ_node, val_node])
-                )
+            del_conditional_aliases([targ_node, val_node])
         elif targ_matches and not val_matches: # Known node reassigned to unknown node (K1 = U1)
             targ_node = targ_matches[-1]
 
             del_alias(targ_node)
-            if self._in_conditional:
-                self._conditional_assignment_handlers[curr_context].append(
-                    lambda: del_conditional_alias(targ_node)
-                )
+            del_conditional_aliases([targ_node])
         elif not targ_matches and val_matches: # Unknown node assigned to known node (U1 = K1)
             val_node = val_matches[-1]
 
             add_alias(val_node)
-            if self._in_conditional:
-                self._conditional_assignment_handlers[curr_context].append(
-                    lambda: del_conditional_alias(val_node)
-                )
+            del_conditional_aliases([val_node])
 
     def _process_module(self, module, context, alias_root=True):
         """
         Takes the identifier for a module, sometimes a period-separated string
-        of sub-modules, and searches the list of parse trees for a matching
-        module. If no match is found, new module nodes are generated and
-        appended to self.dependency_trees.
+        of sub-modules, and searches the API forest for a matching module. If no
+        match is found, new module nodes are generated and appended to
+        self.dependency_trees.
 
         @param module: identifier for the module.
         @param context: context in which the module is imported.
@@ -269,7 +265,7 @@ class APIForest(ast.NodeVisitor):
 
         return term_node
 
-    ## Context Managers ##
+    ## Context Handlers ##
 
     # @utils.context_handler
     # def visit_Global(self, node):
@@ -292,11 +288,10 @@ class APIForest(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
-    # @utils.context_handler
-    # def visit_Lambda(self, node):
-    #     return
+    def visit_Lambda(self, node):
+        self.generic_visit(node) # TODO: Handle parameter names
 
-    ## Control Flow Managers ##
+    ## Control Flow Handlers ##
 
     @utils.conditional_handler
     def visit_If(self, node):
@@ -339,7 +334,7 @@ class APIForest(ast.NodeVisitor):
 
             tokens = utils.recursively_tokenize_node(target, [])
             alias = utils.stringify_tokenized_nodes(tokens)
-            nodes = self._recursively_process_tokens(tokens) # Add a NO INCREMENT flag
+            nodes = self._recursively_process_tokens(tokens, no_increment=True)
 
             if not nodes:
                 return
@@ -349,21 +344,20 @@ class APIForest(ast.NodeVisitor):
         if isinstance(node.target, ast.Name):
             del_aliases(node.target)
         elif isinstance(node.target, ast.Tuple) or isinstance(node.target, ast.List):
-            map(del_aliases, node.target.elts)
+            for elt in node.target.elts:
+                del_aliases(elt)
 
         tokens = utils.recursively_tokenize_node(node.iter, [])
         self._recursively_process_tokens(tokens)
 
-        for body_node in [node.iter] + node.body + node.orelse:
-            try:
-                node_name = type(body_node).__name__
-                custom_visitor = getattr(self, ''.join(["visit_", node_name]))
-                custom_visitor(body_node)
-            except AttributeError:
-                self.generic_visit(body_node)
+        body_nodes = [node.iter] + node.body + node.orelse
+        utils.visit_body_nodes(self, body_nodes)
 
         # QUESTION: How to handle node.orelse? Nodes in orelse are executed if
         # the loop finishes normally, rather than via a break statement
+
+    def visit_AsyncFor(self, node):
+        self.visit_For(node)
 
     def visit_withitem(self, node):
         def get_nodes(n):
@@ -388,10 +382,11 @@ class APIForest(ast.NodeVisitor):
     ## Aliasing Handlers ##
 
     def visit_Import(self, node):
-        # TODO: Ignore `import .X`
-
         curr_context = self._context_to_string()
         for module in node.names:
+            if module.name.startswith('.'): # Ignores relative imports
+                continue
+
             alias = module.asname if module.asname else module.name
             module_leaf_node = self._process_module(
                 module=module.name,
@@ -402,9 +397,7 @@ class APIForest(ast.NodeVisitor):
             module_leaf_node.add_alias(curr_context, alias)
 
     def visit_ImportFrom(self, node):
-        # TODO: Ignore `from X import *`
-        
-        if node.level:
+        if node.level: # Ignores relative imports
             return
 
         curr_context = self._context_to_string()
@@ -415,6 +408,9 @@ class APIForest(ast.NodeVisitor):
         )
 
         for alias in node.names:
+            if alias.name == '*': # Ignore star imports
+                continue
+
             child_exists = False
             alias_id = alias.asname if alias.asname else alias.name
 
@@ -462,9 +458,6 @@ class APIForest(ast.NodeVisitor):
 
     @utils.default_handler
     def visit_Call(self, node):
-        tokens = utils.recursively_tokenize_node(node, [])
-        nodes = self._recursively_process_tokens(tokens)
-
         return
 
     @utils.default_handler
@@ -506,6 +499,3 @@ class APIForest(ast.NodeVisitor):
     @utils.default_handler
     def visit_Set(self, node):
         return
-
-    def visit_comprehension(self, node):
-        self.generic_visit(node) # TEMP
