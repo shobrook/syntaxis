@@ -191,11 +191,11 @@ class ProgramMetrics(ast.NodeVisitor):
 
         super().generic_visit(node)
 
-    @utils.context_manager
+    @utils.context_handler
     def visit_ClassDef(self, node):
         pass
 
-    @utils.context_manager
+    @utils.context_handler
     def visit_FunctionDef(self, node):
         curr_ctx = self._context_to_string()
         self.method_to_loc_map[curr_ctx] = range(node.lineno, utils.get_max_lineno(node.body[-1]) + 1)
