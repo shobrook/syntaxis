@@ -20,11 +20,6 @@ from collections import defaultdict
 # [] Get rid of the type/type/type/... schema for searching nodes
 # [] Debug the frequency analysis
 
-# Handling Comprehensions #
-# - You don't know the length of the resulting data structure
-# - Say x = [bar(y) for y in z]; we can say that any instance of x[WHATEVER] corresponds to an instance of bar()
-# - The 'x' in `for x in y` only has scope within the comprehension, and won't change anything in the outer scope
-
 # Handling Functions #
 # - If a token is imported, and then a function with the same name is defined, delete the alias for that token
 # - Save defined function names and their return types in a field (search field when processing tokens)
@@ -109,13 +104,27 @@ class APIForest(ast.NodeVisitor):
                 else:
                     self._recursively_process_tokens(content)
                     content = "[]"
+            elif type == "comprehension":
+                # TODO: Say x = [foo(y) for y in z]. We can say that any
+                # instance of x[WHATEVER] corresponds to an instance of bar()
+
+                for sub_token in content:
+                    if sub_token[1] == "target":
+                        continue # TODO: Block search for targets when processing elts
+
+                    self._recursively_process_tokens(sub_token[0])
+
+                content = '' # QUESTION: This needed?
 
             flattened_tokens.append((content, type))
 
         for idx, token in enumerate(flattened_tokens):
             content, type = token
-            token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
 
+            if type == "comprehension":
+                break
+
+            token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
             if not idx: # Beginning of iteration; find base token
                 for root in self.dependency_trees:
                     matching_node = utils.find_matching_node(
