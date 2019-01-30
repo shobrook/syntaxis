@@ -299,10 +299,10 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
 
         tokens.append((tokenized_args, "call"))
         if isinstance(node.func, ast.Name): # y()
-            tokens.append((node.func.id, "function")) # Change to "instance"?
+            tokens.append((node.func.id, "instance"))
             return tokens[::-1]
         elif isinstance(node.func, ast.Attribute): # x.y()
-            tokens.append((node.func.attr, "function")) # Change to "instance"?
+            tokens.append((node.func.attr, "instance"))
             return recursively_tokenize_node(node.func.value, tokens)
     elif isinstance(node, ast.Attribute): # x.y
         tokens.append((node.attr, "instance"))
@@ -310,30 +310,30 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     elif isinstance(node, ast.Subscript): # x[]
         slice = []
         if isinstance(node.slice, ast.Index):
-            if isinstance(node.slice.value, ast.Str): # ["a"]
-                slice.append(("\"" + node.slice.value.s + "\"", "str"))
-            elif isinstance(node.slice.value, ast.Num): # [0]
-                slice.append((str(node.slice.value.n), "num"))
-            else: # [y()], [x], [x.y], ...
-                slice = recursively_tokenize_node(node.slice.value, [])
+            slice = recursively_tokenize_node(node.slice.value, [])
+
+            # if isinstance(node.slice.value, ast.Str): # ["a"]
+            #     slice.append(("\"" + node.slice.value.s + "\"", "str"))
+            # elif isinstance(node.slice.value, ast.Num): # [0]
+            #     slice.append((str(node.slice.value.n), "num"))
+            # else: # [y()], [x], [x.y], ...
+            #     slice = recursively_tokenize_node(node.slice.value, [])
         else: # ast.Slice (i.e. [1:2]), ast.ExtSlice (i.e. [1:2, 3])
             return tokens[::-1] # TODO: Handle this properly
 
         tokens.append((slice, "subscript"))
         return recursively_tokenize_node(node.value, tokens)
     elif isinstance(node, ast.Dict):
-        # keys = [recursively_tokenize_node(n, []) for n in node.keys]
-        # vals = [recursively_tokenize_node(n, []) for n in node.values]
-        #
-        # tokens.append((zip(keys, vals), "hashmap"))
-        # return tokens[::-1]
-        return []
+        keys = [recursively_tokenize_node(n, []) for n in node.keys]
+        vals = [recursively_tokenize_node(n, []) for n in node.values]
+
+        tokens.append((zip(keys, vals), "hashmap"))
+        return tokens[::-1]
     elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        # elts = [recursively_tokenize_node(n, []) for n in node.elts]
-        #
-        # tokens.append((elts, "array"))
-        # return tokens[::-1]
-        return []
+        elts = [recursively_tokenize_node(n, []) for n in node.elts]
+
+        tokens.append((elts, "array"))
+        return tokens[::-1]
     elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
         token = []
         for generator in node.generators:
@@ -353,6 +353,12 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         return [] # TODO
     elif isinstance(node, ast.IfExp):
         return [] # TODO: Handle ternary assignments
+    elif isinstance(node, ast.Str):
+        tokens.append(("\"" + node.slice.value.s + "\"", "str"))
+        return tokens[::-1]
+    elif isinstance(node, ast.Num):
+        tokens.append((str(node.slice.value.n), "num"))
+        return tokens[::-1]
     else:
         return [] # TODO
 
