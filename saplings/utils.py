@@ -7,67 +7,10 @@ import ast
 from collections import defaultdict
 
 
-############
-# DECORATORS
-############
+######################
+# METRICS.PY UTILITIES
+######################
 
-
-def context_handler(func):
-    """
-    Wrapper method around generic_visit that updates the context stack
-    before traversing a subtree, and pops from the stack when the traversal
-    is finished.
-    """
-
-    def wrapper(self, node):
-        new_ctx = func.__name__.replace("visit_", '')
-        adj_ctx = [new_ctx, node.name] if hasattr(node, "name") and node.name else [new_ctx]
-        self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
-
-        func(self, node)
-        self.generic_visit(node)
-
-        self._context_stack.pop()
-
-    return wrapper
-
-def conditional_handler(func):
-    def wrapper(self, node):
-        new_ctx = func.__name__.replace("visit_", '')
-        self._context_stack.append(''.join([new_ctx, str(node.lineno)]))
-        self._in_conditional = True
-
-        body_nodes = [node.test] + node.body if hasattr(node, "test") else node.body
-        for body_node in body_nodes:
-            try:
-                node_name = type(body_node).__name__
-                custom_visitor = getattr(self, ''.join(["visit_", node_name]))
-                custom_visitor(body_node)
-            except AttributeError:
-                self.generic_visit(body_node)
-
-        contexts = [self._context_to_string()]
-
-        self._in_conditional = False
-        self._context_stack.pop()
-
-        additional_contexts = func(self, node)
-        contexts.extend(additional_contexts)
-
-        for context in contexts:
-            for handler in self._conditional_assignment_handlers[context]:
-                handler()
-
-            del self._conditional_assignment_handlers[context]
-
-    return wrapper
-
-def default_handler(func):
-    def wrapper(self, node):
-        tokens = recursively_tokenize_node(node, [])
-        nodes = self._recursively_process_tokens(tokens)
-
-    return wrapper
 
 def dispatch(func):
     def wrapper(self, node):
@@ -91,9 +34,9 @@ def dispatch(func):
     return wrapper
 
 
-######################
-# API FOREST UTILITIES
-######################
+#####################
+# FOREST.PY UTILITIES
+#####################
 
 
 class Node(object):
@@ -213,6 +156,67 @@ class Node(object):
 
         return default
 
+def visit_body_nodes(self, nodes):
+    for node in nodes:
+        try:
+            node_name = type(node).__name__
+            custom_visitor = getattr(self, ''.join(["visit_", node_name]))
+            custom_visitor(node)
+        except AttributeError:
+            self.generic_visit(node)
+
+def context_handler(func):
+    """
+    Decorator.
+    Wrapper method around generic_visit that updates the context stack
+    before traversing a subtree, and pops from the stack when the traversal
+    is finished.
+    """
+
+    def wrapper(self, node):
+        new_ctx = func.__name__.replace("visit_", '')
+        adj_ctx = [new_ctx, node.name] if hasattr(node, "name") and node.name else [new_ctx]
+        self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
+
+        func(self, node)
+        self.generic_visit(node)
+
+        self._context_stack.pop()
+
+    return wrapper
+
+def conditional_handler(func):
+    def wrapper(self, node):
+        new_ctx = func.__name__.replace("visit_", '')
+        self._context_stack.append(''.join([new_ctx, str(node.lineno)]))
+        self._in_conditional = True
+
+        body_nodes = [node.test] + node.body if hasattr(node, "test") else node.body
+        visit_body_nodes(self, body_nodes)
+
+        contexts = [self._context_to_string()]
+
+        self._in_conditional = False
+        self._context_stack.pop()
+
+        additional_contexts = func(self, node)
+        contexts.extend(additional_contexts)
+
+        for context in contexts:
+            for handler in self._conditional_handlers[context]:
+                handler()
+
+            del self._conditional_handlers[context]
+
+    return wrapper
+
+def default_handler(func):
+    def wrapper(self, node):
+        tokens = recursively_tokenize_node(node, [])
+        nodes = self._recursively_process_tokens(tokens)
+
+    return wrapper
+
 def find_matching_node(subtree, id, type_pattern, context=None):
     """
     @param subtree:
@@ -293,12 +297,12 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         for keyword in node.keywords: # keyword(arg, value)
             tokenized_args.append(recursively_tokenize_node(keyword.value, []))
 
-        tokens.append((tokenized_args, "args"))
+        tokens.append((tokenized_args, "call"))
         if isinstance(node.func, ast.Name): # y()
-            tokens.append((node.func.id, "function"))
+            tokens.append((node.func.id, "function")) # Change to "instance"?
             return tokens[::-1]
         elif isinstance(node.func, ast.Attribute): # x.y()
-            tokens.append((node.func.attr, "function"))
+            tokens.append((node.func.attr, "function")) # Change to "instance"?
             return recursively_tokenize_node(node.func.value, tokens)
     elif isinstance(node, ast.Attribute): # x.y
         tokens.append((node.attr, "instance"))
@@ -313,7 +317,7 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
             else: # [y()], [x], [x.y], ...
                 slice = recursively_tokenize_node(node.slice.value, [])
         else: # ast.Slice (i.e. [1:2]), ast.ExtSlice (i.e. [1:2, 3])
-            return tokens[::-1]
+            return tokens[::-1] # TODO: Handle this properly
 
         tokens.append((slice, "subscript"))
         return recursively_tokenize_node(node.value, tokens)
@@ -330,41 +334,47 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         # tokens.append((elts, "array"))
         # return tokens[::-1]
         return []
-    elif isinstance(node, ast.ListComp):
-        return [] # TODO
-    elif isinstance(node, ast.GeneratorExp):
-        return [] # TODO
-    elif isinstance(node, ast.DictComp):
-        return [] # TODO
-    elif isinstance(node, ast.SetComp):
-        return [] # TODO
+    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        elts = []
+        if hasattr(node, "elt"):
+            elts.append(recursively_tokenize_node(node.elt, []))
+        elif hasattr(node, "key") and hasattr(node, "value"):
+            elts.append(recursively_tokenize_node(node.key, []))
+            elts.append(recursively_tokenize_node(node.value, []))
+
+        iters, targets, ifs = [], [], []
+        for generator in node.generators:
+            iters.append(recursively_tokenize_node(generator.iter, []))
+            targets.append(recursively_tokenize_node(generator.target, []))
+            # ifs.append(recursively_tokenize_node()) # TODO: Handle ifs
+
+        token = [(iters, "iterables"), (targets, "targets"), (elts, "elts")]
+        tokens.append((token, "comprehension"))
+        return tokens[::-1]
     elif isinstance(node, ast.Lambda):
         return [] # TODO
     elif isinstance(node, ast.IfExp):
-        return [] # TODO
+        return [] # TODO: Handle ternary assignments
     else:
         return [] # TODO
 
 def stringify_tokenized_nodes(tokens):
     stringified_tokens = ''
-    token_stack = []
     for token in tokens:
         content, type = token
 
-        if type == "args":
-            stringified_tokens += "()"
-        elif type == "subscript":
-            stringified_tokens += "[%s]" % str(content)
+        if type in ("call", "subscript"):
+            stringified_tokens += content
         elif stringified_tokens:
-            stringified_tokens = '.'.join([stringified_tokens, str(content)])
+            stringified_tokens += '.' + str(content)
         else:
-            stringified_tokens = str(content)
+            stringified_tokens = str(content) # Why?
 
     return stringified_tokens
 
 
 #################
-# STATS UTILITIES
+# OTHER UTILITIES
 #################
 
 
