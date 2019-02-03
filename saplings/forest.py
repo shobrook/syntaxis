@@ -14,28 +14,25 @@ from collections import defaultdict
 
 
 # [] Remove "module" type from nodes; actually, remove all types
-# [] Handle assignments to data structures
 # [] Infer input and return types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
 # [] Debug the frequency analysis
 
 # Handling Functions #
-# - If a token is imported, and then a function with the same name is defined, delete the alias for that token
 # - Save defined function names and their return types in a field (search field when processing tokens)
 # - Is processing the input types of functions as simple as adding the parameter name as an alias for the input node,
 #   then calling self.visit() on the function node? You could only modify the input node and it's children, cuz everything
 #   else in the function body has already been processed.
 
-# TODO: Handle function reassignments (and function declarations within conditionals)
-
 class APIForest(ast.NodeVisitor):
     def __init__(self, tree):
         # IDEA: The entire context/aliasing system can be refactored such that
-        # the object holds a mapping from contexts to alive and dead nodes. This
-        # could make search more efficient and at the very least make this code
-        # easier to read.
+        # a single dict holds a mapping from contexts to alive and dead nodes.
+        # This could make search more efficient and at the very least make this
+        # code easier to read.
 
         self.tree = tree
+        self.dependency_trees = [] # Holds root nodes of API usage trees
 
         # OPTIMIZE: Turns AST into doubly-linked AST
         for node in ast.walk(self.tree):
@@ -43,14 +40,12 @@ class APIForest(ast.NodeVisitor):
                 child.parent = node
 
         self._context_stack = ["global"] # Keeps track of current context
-        self.dependency_trees = [] # Holds root nodes of API usage trees
+        self._context_to_string = lambda: '.'.join(self._context_stack)
 
         self._in_conditional = False # Flag for whether inside conditional block or not
 
         # Holds functions that clear aliases manipulated inside a conditional block
         self._conditional_handlers = defaultdict(lambda: [])
-
-        self._context_to_string = lambda: '.'.join(self._context_stack)
 
         self.visit(self.tree)
 
@@ -58,8 +53,8 @@ class APIForest(ast.NodeVisitor):
 
     def _recursively_process_tokens(self, tokens, no_increment=False, is_data_struct=False):
         """
-        This is the master function for appending to the API forest. Takes a
-        (potentially nested) list of token and type tuples and searches
+        This is the master function for appending to an API tree. Takes a
+        potentially nested list of (token, type) tuples and searches
         for equivalent nodes in the API forest. Once the terminal node of a
         path of equivalent nodes has been reached, additional nodes are created
         and added as children to the terminal node.
@@ -71,9 +66,6 @@ class APIForest(ast.NodeVisitor):
         @return: list of references to parse tree nodes corresponding to the
         tokens.
         """
-
-        node_stack = []
-        curr_context = self._context_to_string()
 
         # BUG: Doesn't handle nested data structures
         def handle_data_structs(content, type):
@@ -109,9 +101,12 @@ class APIForest(ast.NodeVisitor):
         # QUESTION: How to handle when a data struct. gets manipulated
         # (appended to, popped from, etc.)?
 
-        if is_data_struct:
-            content, type = tokens[0]
-            return handle_data_structs(content, type)
+        # if is_data_struct:
+        #     content, type = tokens[0]
+        #     return handle_data_structs(content, type)
+
+        node_stack = []
+        curr_context = self._context_to_string()
 
         # Flattens nested tokens
         flattened_tokens = []
@@ -200,7 +195,7 @@ class APIForest(ast.NodeVisitor):
         targ_matches = self._recursively_process_tokens(tokenized_target) # LHS
         val_matches = self._recursively_process_tokens(value, is_data_struct=is_data_struct) # RHS
 
-        alias = utils.stringify_tokenized_nodes(tokenized_target)
+        alias = utils.stringify_tokenized_nodes(tokenized_target) # BUG: This is stringifying the non-flattened list of tokens
         add_alias = lambda node: node.add_alias(curr_context, alias)
         del_alias = lambda node: node.del_alias(curr_context, alias)
 
@@ -313,6 +308,8 @@ class APIForest(ast.NodeVisitor):
     # def visit_Nonlocal(self, node):
     #     return
 
+    # TODO: Handle function/class reassignments (and declarations within conditionals)
+
     @utils.context_handler
     def visit_ClassDef(self, node):
         pass
@@ -323,9 +320,6 @@ class APIForest(ast.NodeVisitor):
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
-
-    def visit_Lambda(self, node):
-        self.generic_visit(node) # TODO: Handle parameter names
 
     ## Control Flow Handlers ##
 
@@ -492,6 +486,16 @@ class APIForest(ast.NodeVisitor):
     def visit_AnnAssign(self, node):
         self.visit_Assign(node)
 
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Del):
+            pass  # TODO: Delete alias from tree
+        elif isinstance(node.ctx, ast.Load):
+            pass  # TODO: Increment count of node (beware of double counting)
+
+        return
+
+    # TODO: Fix double-counting for all the default_handler visitors
+
     @utils.default_handler
     def visit_Call(self, node):
         return
@@ -512,14 +516,6 @@ class APIForest(ast.NodeVisitor):
     def visit_Subscript(self, node):
         return
 
-    def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Del):
-            pass  # TODO: Delete alias from tree
-        elif isinstance(node.ctx, ast.Load):
-            pass  # TODO: Increment count of node (beware of double counting)
-
-        return
-
     @utils.default_handler
     def visit_Dict(self, node):
         return
@@ -534,4 +530,8 @@ class APIForest(ast.NodeVisitor):
 
     @utils.default_handler
     def visit_Set(self, node):
+        return
+
+    @utils.default_handler
+    def visit_Lambda(self, node):
         return
