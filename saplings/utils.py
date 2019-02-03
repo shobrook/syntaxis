@@ -354,10 +354,10 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     elif isinstance(node, ast.IfExp):
         return [] # TODO: Handle ternary assignments
     elif isinstance(node, ast.Str):
-        tokens.append(("\"" + node.slice.value.s + "\"", "str"))
+        tokens.append(("\"" + node.s + "\"", "str"))
         return tokens[::-1]
     elif isinstance(node, ast.Num):
-        tokens.append((str(node.slice.value.n), "num"))
+        tokens.append((str(node.n), "num"))
         return tokens[::-1]
     else:
         return [] # TODO
