@@ -4,8 +4,32 @@
 
 
 import ast
-import utils
 from collections import defaultdict
+
+# Local modules
+import utils
+
+
+##########
+# REDESIGN
+##########
+
+
+# Input is an AST.
+# ast.NodeVisitor performs a depth-first traversal on the AST.
+# Output is a forest; each tree represents the subset of an imported package’s
+# API that was used in the program. Each node includes a frequency value. Nodes
+# are not statically typed.
+
+# The Transducer class should hold the following mapping:
+    # {
+    #     "context1": {
+    #         "alias1": Node(),
+    #         ...
+    #     },
+    #     ...
+    # }
+# QUESTION: Can a single alias refer to multiple nodes at the same time, in one context? 
 
 
 ######
@@ -13,6 +37,7 @@ from collections import defaultdict
 ######
 
 
+# [] Rename forest.py to transducer.py
 # [] Remove "module" type from nodes; actually, remove all types
 # [] Infer input and return types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
@@ -24,26 +49,26 @@ from collections import defaultdict
 #   then calling self.visit() on the function node? You could only modify the input node and it's children, cuz everything
 #   else in the function body has already been processed.
 
-class APIForest(ast.NodeVisitor):
-    def __init__(self, tree):
+class Transducer(ast.NodeVisitor):
+    def __init__(self, input_tree):
         # IDEA: The entire context/aliasing system can be refactored such that
         # a single dict holds a mapping from contexts to alive and dead nodes.
         # This could make search more efficient and at the very least make this
         # code easier to read.
 
-        self.tree = tree
-        self.dependency_trees = [] # Holds root nodes of API usage trees
+        self.tree = input_tree
+        self.forest = [] # Holds root nodes of output trees
 
-        # OPTIMIZE: Turns AST into doubly-linked AST
-        for node in ast.walk(self.tree):
-            for child in ast.iter_child_nodes(node):
-                child.parent = node
+        # # OPTIMIZE: Turns AST into doubly-linked tree
+        # for node in ast.walk(self.tree):
+        #     for child in ast.iter_child_nodes(node):
+        #         child.parent = node
 
         self._context_stack = ["global"] # Keeps track of current context
         self._context_to_string = lambda: '.'.join(self._context_stack)
 
+        # QUESTION: Is this needed?
         self._in_conditional = False # Flag for whether inside conditional block or not
-
         # Holds functions that clear aliases manipulated inside a conditional block
         self._conditional_handlers = defaultdict(lambda: [])
 
@@ -140,7 +165,7 @@ class APIForest(ast.NodeVisitor):
 
             token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
             if not idx: # Beginning of iteration; find base token
-                for root in self.dependency_trees:
+                for root in self.forest:
                     matching_node = utils.find_matching_node(
                         subtree=root,
                         id=token_id,
@@ -151,6 +176,7 @@ class APIForest(ast.NodeVisitor):
                     if matching_node: # Found match for base token, pushing to stack
                         if not no_increment:
                             matching_node.increment_count()
+
                         node_stack.append(matching_node)
                         break
             elif node_stack: # Stack exists, continue pushing to it
@@ -172,6 +198,8 @@ class APIForest(ast.NodeVisitor):
                         context=curr_context,
                         alias=token_id
                     )
+
+                    # If in_conditional, and not an assignment, then you wanna get rid of the if contexts...
 
                     node_stack[-1].add_child(child_node)
                     node_stack.append(child_node)
@@ -236,7 +264,7 @@ class APIForest(ast.NodeVisitor):
         Takes the identifier for a module, sometimes a period-separated string
         of sub-modules, and searches the API forest for a matching module. If no
         match is found, new module nodes are generated and appended to
-        self.dependency_trees.
+        self.forest.
 
         @param module: identifier for the module.
         @param context: context in which the module is imported.
@@ -251,7 +279,7 @@ class APIForest(ast.NodeVisitor):
         root_module = sub_modules[0]
         term_node = None
 
-        for root in self.dependency_trees:
+        for root in self.forest:
             matching_module = utils.find_matching_node(
                 subtree=root,
                 id=root_module,
@@ -269,7 +297,7 @@ class APIForest(ast.NodeVisitor):
                 context=context,
                 alias=root_module if alias_root else '' # For `from X import Y`
             )
-            self.dependency_trees.append(term_node)
+            self.forest.append(term_node)
 
         for idx in range(len(sub_modules[1:])):
             sub_module = sub_modules[idx + 1]
@@ -344,6 +372,8 @@ class APIForest(ast.NodeVisitor):
         return contexts
 
         # QUESTION: How to handle node.orelse and node.finalbody?
+            # node.finalbody is where all final assignments are made, and should
+            # persist into the parent context
 
     @utils.conditional_handler
     def visit_ExceptHandler(self, node):
@@ -384,7 +414,7 @@ class APIForest(ast.NodeVisitor):
         utils.visit_body_nodes(self, body_nodes)
 
         # QUESTION: How to handle node.orelse? Nodes in orelse are executed if
-        # the loop finishes normally, rather than via a break statement
+        # the loop finishes normally, rather than with a break statement
 
     def visit_AsyncFor(self, node):
         self.visit_For(node)
@@ -468,6 +498,9 @@ class APIForest(ast.NodeVisitor):
             values = tuple(map(node_tokenizer, node.value.elts))
         else:
             values = utils.recursively_tokenize_node(node.value, [])
+
+        if curr_context == "global.FunctionDef#scrape_files277":
+            print(values)
 
         targets = node.targets if hasattr(node, "targets") else (node.target)
         for target in targets:
