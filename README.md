@@ -3,7 +3,8 @@
   <br />
 </h1>
 
-`saplings` is a static analysis library for Python, fit with tools for calculating various software metrics and analyzing [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree). Its most notable feature is an algorithm that mines all the ways in which imported packages<!--imported package APIs--> are used in a Python program, and visualizes their usage patterns as parse trees. <!--Mention some applications of this algorithm?-->Other features include:
+`saplings` is a static analysis library for Python, fit with tools for calculating various software metrics and analyzing [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree). Its most notable feature is an algorithm that mines all the ways in which imported packages<!--imported package APIs--> are used in a Python program, and represents their usage patterns as parse trees. <!--Mention some applications of this algorithm?-->Other features include:
+
 - Cyclomatic Complexity
 - Halstead Metrics
 - Maintainability Index
@@ -13,27 +14,28 @@
 - Afferent and Efferent Couplings (COMING SOON)
 - Function Rankings (COMING SOON)
 
-<!--Think of saplings as the 'BeautifulSoup' for Python source code.-->
-
 ## Installation
 
-Compiled binaries are available for [every release](https://github.com/shobrook/saplings/releases), and you can also install `saplings` with pip:
+> Requires Python 3.0 or higher.
+
+You can also install `saplings` with pip:
 
 `$ pip install saplings`
 
-Requires Python 3.0 or higher.
-
 ## API
 
-To get started, import the `Saplings` object from `saplings` and initialize it with the root node of your AST (or the path of a Python file). Think of this object as the "BeautifulSoup" for Python source code.
+To get started, import the `Saplings` object from `saplings` and initialize it with the path of a Python file (or the root node of its AST). Think of `Saplings` as a wrapper for a program's Abstract Syntax Tree, much like `BeautifulSoup` wraps a website's DOM tree and exposes methods for doing things to that tree.
 
 **Initializing with a File Path**
+
 ```python
 from saplings import Saplings
 
 my_saplings = Saplings("path/to/your_program.py")
 ```
+
 **Initializing with an AST Root**
+
 ```python
 import ast
 from saplings import Saplings
@@ -43,11 +45,25 @@ program_ast = ast.parse(my_program)
 my_saplings = Saplings(program_ast)
 ```
 
-The `Saplings` object exposes various algorithms for analyzing your Python program.
+The `Saplings` object exposes the following algorithms for analyzing your Python program:
 
 #### `get_api_forest()`
 
-#### `find(nodes=[]) -> List[ast.Node]`
+
+
+This is what makes `saplings` different from other static analysis libraries. `get_api_forest()` will
+
+
+Saplings is a type of Finite State Transducer (FST) called a Tree Transducer (TT), which takes a tree as input (a program’s AST) and outputs a forest. Each tree in the forest represents the subset of an imported package’s API that was used in the program.
+- Specifically, it’s a deterministic Top-Down Tree Transducer
+- TODO: Formally define this (incl. rules). Diagram it?
+
+
+```python
+
+```
+
+#### `find(nodes=[], skip=[]) -> List[ast.Node]`
 
 Returns a list of matching AST nodes. `nodes` is a list of node types to retrieve and the `skip` parameter is a list of subtrees to skip in the (depth-first) traversal. Both parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
 
@@ -75,11 +91,11 @@ print(loop_freqs)
 # stdout: {ast.While: 19, ast.For: 12}
 ```
 
-#### `get_cyclomatic_complexity()`
+#### `get_cyclomatic_complexity(method_level=False)`
 
-#### `get_halstead_metrics()`
+#### `get_halstead_metrics(method_level=False)`
 
-#### `get_maintainability_index()`
+#### `get_maintainability_index(method_level=False)`
 
 ## Planting a Sapling
 
