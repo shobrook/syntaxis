@@ -3,40 +3,20 @@
   <br />
 </h1>
 
-`saplings` is a library for pulling data out of [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) in Python. It provides ... <!--value proposition-->
-
-The hallmark feature of `saplings` is an algorithm that maps out the API of an imported module based on its usage in a program. <!--Because I care about the environment, I built `saplings` to represent APIs as parse trees.-->
+`saplings` is a library for pulling data out of [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) in Python. Its hallmark feature is an algorithm that maps out the API of an imported module based on its usage in a program. These APIs are represented as parse trees, as shown below:
 
 <h1 align="center" display="flex" justify-content="center">
-  <img height="300px" src="./code_demo.png" />
-  <img height="200px" src="./final_saplings_output.gif" />
+  <img height="315px" src="./code_demo.png" />
+  <img height="315px" src="./final_saplings_output.gif" />
 </h1>
 
-```python
-import requests
-
-def make_post_request(url, payload={}):
-  response = requests.post(url, payload)
-  status = response.status_code
-  if status == requests.code.ok:
-    print("Success!")
-  elif status == requests.code.not_found:
-    print("Failure!")
-
-  return response
-
-gh_response = make_post_request("https://api.github.com/")
-print("Response text:", gh_response.text)
-```
-
-Other features include:
+`saplings` also provides easy functions for calculating software metrics, including:
 - Cyclomatic Complexity
 - Halstead Metrics
 - Maintainability Index
-- Frequency Analysis
-- Detection of Partial, Recursive, or Curried functions
-- Afferent and Efferent Couplings (COMING SOON)
 - Function Rankings (COMING SOON)
+- Afferent and Efferent Couplings (COMING SOON)
+<!--- Detection of Partial, Recursive, or Curried functions-->
 
 ## Installation
 
