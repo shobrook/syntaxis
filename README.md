@@ -3,7 +3,7 @@
   <br />
 </h1>
 
-`saplings` is a library for pulling data out of [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) in Python. Its hallmark feature is an algorithm that maps out the API of an imported module based on its usage in a program. These APIs are represented as dependency trees, shown below:
+`saplings` is a library for pulling data out of [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) in Python. Its hallmark feature is an algorithm that maps out the API of an imported module based on its usage in a program. An API is represented as a dependency tree, shown below:
 
 <h1 align="center" display="flex" justify-content="center">
   <img height="315px" src="./code_demo.png" />
