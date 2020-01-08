@@ -3,12 +3,36 @@
   <br />
 </h1>
 
-`saplings` is a static analysis library for Python, fit with tools for calculating various software metrics and analyzing [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree). Its most notable feature is an algorithm that mines all the ways in which imported packages<!--imported package APIs--> are used in a Python program, and represents their usage patterns as parse trees. <!--Mention some applications of this algorithm?-->Other features include:
+`saplings` is a library for pulling data out of [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) in Python. It provides ... <!--value proposition-->
 
+The hallmark feature of `saplings` is an algorithm that maps out the API of an imported module based on its usage in a program. <!--Because I care about the environment, I built `saplings` to represent APIs as parse trees.-->
+
+<h1 align="center" display="flex">
+  <img height="30%" src="./saplings_code_demo.png" />
+  <img height="30%" src="./final_saplings_output.gif" />
+</h1>
+
+```python
+import requests
+
+def make_post_request(url, payload={}):
+  response = requests.post(url, payload)
+  status = response.status_code
+  if status == requests.code.ok:
+    print("Success!")
+  elif status == requests.code.not_found:
+    print("Failure!")
+
+  return response
+
+gh_response = make_post_request("https://api.github.com/")
+print("Response text:", gh_response.text)
+```
+
+Other features include:
 - Cyclomatic Complexity
 - Halstead Metrics
 - Maintainability Index
-- AST Node Retrieval
 - Frequency Analysis
 - Detection of Partial, Recursive, or Curried functions
 - Afferent and Efferent Couplings (COMING SOON)
@@ -21,6 +45,34 @@
 You can also install `saplings` with pip:
 
 `$ pip install saplings`
+
+## Quick Start
+
+Import the `Saplings` object and initialize it with the path of a Python file (or the root node of its AST). Think of `Saplings` as a wrapper for a program's AST that exposes methods for extracting data from that tree.
+
+```python
+from saplings import Saplings
+
+my_saplings = Saplings("path_to_your_program.py")
+```
+_or_
+```python
+import ast
+from saplings import Saplings
+
+my_program = open("path_to_your_program.py", "r").read()
+program_ast = ast.parse(my_program)
+my_saplings = Saplings(program_ast)
+```
+
+This object makes the following methods public:
+
+### `Saplings.api_transducer()`
+
+
+
+### `Saplings.get_freq_map()`
+
 
 ## API
 
@@ -49,15 +101,10 @@ The `Saplings` object exposes the following algorithms for analyzing your Python
 
 #### `get_api_forest()`
 
-
-
-This is what makes `saplings` different from other static analysis libraries. `get_api_forest()` will
-
-
 Saplings is a type of Finite State Transducer (FST) called a Tree Transducer (TT), which takes a tree as input (a program’s AST) and outputs a forest. Each tree in the forest represents the subset of an imported package’s API that was used in the program.
+
 - Specifically, it’s a deterministic Top-Down Tree Transducer
 - TODO: Formally define this (incl. rules). Diagram it?
-
 
 ```python
 
