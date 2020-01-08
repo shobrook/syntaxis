@@ -8,8 +8,8 @@
 The hallmark feature of `saplings` is an algorithm that maps out the API of an imported module based on its usage in a program. <!--Because I care about the environment, I built `saplings` to represent APIs as parse trees.-->
 
 <h1 align="center" display="flex">
-  <img height="30%" src="./saplings_code_demo.png" />
-  <img height="30%" src="./final_saplings_output.gif" />
+  <img height="300px" src="./code_demo.png" />
+  <img height="300px" src="./final_saplings_output.gif" />
 </h1>
 
 ```python
