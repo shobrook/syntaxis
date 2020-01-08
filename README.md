@@ -10,7 +10,7 @@
   <img height="315px" src="./final_saplings_output.gif" />
 </h1>
 
-`saplings` also provides easy functions for calculating software metrics, including:
+This library also provides easy functions for calculating software metrics, including:
 - Cyclomatic Complexity
 - Halstead Metrics
 - Maintainability Index
