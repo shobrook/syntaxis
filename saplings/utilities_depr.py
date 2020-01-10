@@ -1,4 +1,8 @@
-# Standard Library
+#########
+# GLOBALS
+#########
+
+
 import ast
 from collections import defaultdict
 
@@ -85,7 +89,6 @@ class Node(object):
 
         return default
 
-
 # def context_handler(func):
 #     """
 #     Decorator.
@@ -106,77 +109,21 @@ class Node(object):
 #
 #     return wrapper
 
-
-def reference_handler(func):
+def default_handler(func):
     def wrapper(self, node):
-        tokens = recursively_tokenize_node(node, [])
-        self._recursively_process_tokens(tokens)
+        is_non_module_func_call = func(self, node)
+
+        if not is_non_module_func_call:
+            tokens = recursively_tokenize_node(node, [])
+            nodes = self._recursively_process_tokens(tokens)
 
     return wrapper
-
-
-########
-# TOKENS
-########
-
-
-class StrToken(object):
-    def __init__(self, str):
-        self.str = str
-
-    def __repr__(self):
-        return self.str
-
-
-class NumToken(object):
-    def __init__(self, num):
-        self.num = num
-
-    def __repr__(self):
-        return str(self.num)
-
-
-class NameToken(object):
-    def __init__(self, name):
-        self.name = name
-
-    def __repr__(self):
-        return self.name
-
-
-class ArgsToken(object):
-    def __init__(self, args):
-        self.args = args
-
-    def __repr__(self):
-        return "()"
-
-
-class ArgToken(object):
-    def __init__(self, arg, arg_name=''):
-        self.arg, self.arg_name = arg, arg_name
-
-
-class IndexToken(object):
-    def __init__(self, slice):
-        self.slice = slice
-
-    def __repr__(self):
-        return "[]"
 
 def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     """
     Takes an AST node and recursively unpacks it into it's constituent nodes.
     For example, if the input node is "x.y.z()", this function will return
     [('x', "instance"), ('y', "instance"), ('z', "call")].
-
-    The base tokens are "names" (instances). These are variable references. We
-    want to deconstruct every input node into a series of "name" tokens.
-
-    The following tokens contain nested tokens:
-        - "args" (call)
-        - "index" (subscript)
-        -
 
     @param node: AST node.
     @param tokens: token accumulator.
@@ -185,43 +132,40 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     """
 
     if isinstance(node, ast.Name): # x
-        tokens.append((node.id, "name"))
+        tokens.append((node.id, "instance"))
         return tokens[::-1]
     elif isinstance(node, ast.Call):
         tokenized_args = []
 
         for arg in node.args:
             tokenized_args.append(recursively_tokenize_node(arg, []))
-        for keyword in node.keywords:
-            # TODO: You need to include keyword.arg somehow
+        for keyword in node.keywords: # keyword(arg, value)
             tokenized_args.append(recursively_tokenize_node(keyword.value, []))
 
-        tokens.append((tokenized_args, "args"))
-        return recursively_tokenize_node(node.func, tokens)
-
+        tokens.append((tokenized_args, "call"))
         if isinstance(node.func, ast.Name): # y()
-            tokens.append((node.func.id, "name"))
+            tokens.append((node.func.id, "instance"))
             return tokens[::-1]
         elif isinstance(node.func, ast.Attribute): # x.y()
-            tokens.append((node.func.attr, "name"))
+            tokens.append((node.func.attr, "instance"))
             return recursively_tokenize_node(node.func.value, tokens)
     elif isinstance(node, ast.Attribute): # x.y
-        tokens.append((node.attr, "name"))
+        tokens.append((node.attr, "instance"))
         return recursively_tokenize_node(node.value, tokens)
     elif isinstance(node, ast.Subscript): # x[]
         slice = []
         if isinstance(node.slice, ast.Index):
             slice = recursively_tokenize_node(node.slice.value, [])
         else: # ast.Slice (i.e. [1:2]), ast.ExtSlice (i.e. [1:2, 3])
-            slice = [] # TODO
+            return tokens[::-1]
 
-        tokens.append((slice, "index"))
+        tokens.append((slice, "subscript"))
         return recursively_tokenize_node(node.value, tokens)
     elif isinstance(node, ast.Dict):
         keys = [recursively_tokenize_node(n, []) for n in node.keys]
         vals = [recursively_tokenize_node(n, []) for n in node.values]
 
-        tokens.append((zip(keys, vals), "dict"))
+        tokens.append((zip(keys, vals), "hashmap"))
         return tokens[::-1]
     elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
         elts = [recursively_tokenize_node(n, []) for n in node.elts]
@@ -262,34 +206,30 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     else:
         return []
 
-
-def stringify_tokenized_nodes(tokens):
+def stringify_tokenized_nodes(tokens, ignore_non_aliases=False):
     stringified_tokens = ''
-    for index, token in enumerate(tokens):
-        content, type = token
-
-        if type == "args":
+    for content, type in tokens:
+        if type == "call":
             stringified_tokens += "()"
-        elif type == "index":
-            if len(content) == 1 and isinstance(content[0], tuple):
-                index_str, _ = content[0]
-                stringified_tokens += '[' + index_str + ']'
+        elif type == "subscript":
+            if len(content) == 1 and content[0][1] in ("str", "num"):
+                stringified_tokens += '[' + content[0][0] + ']'
             else:
                 stringified_tokens += "[]"
-        elif type == "name":
-            if not index:
-                stringified_tokens += str(content)
-            else:
-                stringified_tokens += '.' + str(content)
+        elif stringified_tokens:
+            stringified_tokens += '.' + str(content)
+        else:
+            stringified_tokens = str(content) # Why?
 
     return stringified_tokens
 
+#---
 
-# def visit_body_nodes(self, nodes):
-#     for node in nodes:
-#         try:
-#             node_name = type(node).__name__
-#             custom_visitor = getattr(self, ''.join(["visit_", node_name]))
-#             custom_visitor(node)
-#         except AttributeError:
-#             self.generic_visit(node)
+def visit_body_nodes(self, nodes):
+    for node in nodes:
+        try:
+            node_name = type(node).__name__
+            custom_visitor = getattr(self, ''.join(["visit_", node_name]))
+            custom_visitor(node)
+        except AttributeError:
+            self.generic_visit(node)
