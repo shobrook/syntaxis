@@ -45,13 +45,12 @@ class Transducer(ast.NodeVisitor):
             if not default:
                 continue
 
-            # BUG: These should be tokenized in a separate
-            # transducer, initialized with the same namespace
-            # the function was defined in
             tokenized_default = utils.recursively_tokenize_node(
                 default,
                 []
             )
+            # BUG: Default values should be processed in a separate transducer
+            # with the same namespace as the one the function was defined in
             default_node = self._recursively_process_tokens(tokenized_default)
 
             default_node, default_node_type = default_node
@@ -75,7 +74,7 @@ class Transducer(ast.NodeVisitor):
             func_params.kw_defaults
         )
 
-        if args.vararg:
+        if func_params.vararg:
             arg_names.append(func_params.vararg.arg)
         arg_names.extend(kwonlyarg_names)
         if func_params.kwarg:
@@ -103,11 +102,10 @@ class Transducer(ast.NodeVisitor):
 
             namespace[arg_name] = arg_node
 
-        # BUG: Recursive functions will cause this to enter
-        # an infinite loop
+        # BUG: Recursive functions will cause this to enter an infinite loop
 
         func_transducer = Transducer(
-            ast.Module(body=node.body),
+            ast.Module(body=func_node.body),
             self.forest,
             namespace
         )
