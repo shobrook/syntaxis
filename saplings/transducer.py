@@ -15,15 +15,21 @@ class Transducer(ast.NodeVisitor):
         # the body of an 'if' statement, conservative=True always assume the
         # body was executed.
 
-        # Looks up saplings nodes by their current alias
+        # Looks up nodes (parse tree and AST) by their current alias
         self._node_lookup_table = namespace.copy() # QUESTION: Or deepcopy?
-        self._uncalled_funcs = {}
-        self._return_node = None
+        self._uncalled_funcs, self._return_node = {}, None
 
-        self.forest = forest  # Holds root nodes of output trees
-        self.visit(tree)  # Begins traversal
+        self.forest = forest # Holds root nodes of output trees
+        self.visit(tree) # Begins traversal
 
-    ## Main Processor ##
+        # Processes uncalled local functions
+        for func_node, func_namespace in self._uncalled_funcs.items():
+            self._process_local_func_call(
+                func_node=func_node,
+                namespace=func_namespace
+            )
+
+    ## Helpers ##
 
     def _process_func_args(self, args, defaults):
         num_args, arg_names = 0, []
@@ -57,6 +63,56 @@ class Transducer(ast.NodeVisitor):
 
         return arg_names, defaults
 
+
+    def _process_local_func_call(self, func_node, namespace, args=[]):
+        func_params = func_node.args
+        arg_names, default_nodes = self._process_func_args(
+            func_params.args,
+            func_params.defaults
+        )
+        kwonlyarg_names, kw_default_nodes = self._process_func_args(
+            func_params.kwonlyargs,
+            func_params.kw_defaults
+        )
+
+        if args.vararg:
+            arg_names.append(func_params.vararg.arg)
+        arg_names.extend(kwonlyarg_names)
+        if func_params.kwarg:
+            arg_names.append(func_params.kwarg.arg)
+
+        namespace = {
+            **namespace,
+            **default_nodes,
+            **kw_default_nodes
+        }
+
+        # TODO: Handle single-star args
+        for index, arg_token in enumerate(args):
+            arg_node = self._recursively_process_tokens(
+                arg_token.arg
+            )
+
+            if not arg_node:
+                continue
+
+            if not arg_token.arg_name:
+                arg_name = arg_names[index]
+            else:
+                arg_name = arg_token.arg_name
+
+            namespace[arg_name] = arg_node
+
+        # BUG: Recursive functions will cause this to enter
+        # an infinite loop
+
+        func_transducer = Transducer(
+            ast.Module(body=node.body),
+            self.forest,
+            namespace
+        )
+        return func_transducer._return_node
+
     def _process_data_structure(self, token):
         is_data_structure = True
 
@@ -83,6 +139,8 @@ class Transducer(ast.NodeVisitor):
             is_data_structure = False
 
         return is_data_structure
+
+    ## Main Processor ##
 
     def _recursively_process_tokens(self, tokens, no_increment=False):
         """
@@ -125,70 +183,23 @@ class Transducer(ast.NodeVisitor):
                 if isinstance(node, ast.FunctionDef):
                     is_last_token = index == len(tokens) - 1
                     if not is_last_token:
-                        next_token = tokens[index + 1]
-
                         # Locally defined function call
-                        if isinstance(next_token, utils.ArgsToken): # QUESTION: Is next_type always gonna be "args"?
-                            if node in self._uncalled_funcs:
-                                # Function is called for the first time
-                                del self._uncalled_funcs[node]
+                        if node in self._uncalled_funcs:
+                            # Function is called for the first time
+                            del self._uncalled_funcs[node]
 
-                            args = node.args
-                            arg_names, default_nodes = self._process_func_args(
-                                args.args,
-                                args.defaults
-                            )
-                            kwonlyarg_names, kw_default_nodes = self._process_func_args(
-                                args.kwonlyargs,
-                                args.kw_defaults
-                            )
+                        return_node = self._process_local_func_call(
+                            func_node=node,
+                            namespace=self._node_lookup_table.copy(),
+                            args=tokens[index + 1].args
+                        )
+                        if not return_node:
+                            break # BUG: What if the next token is an ArgsToken?
+                        elif isinstance(return_node, ast.FunctionDef):
+                            return return_node
 
-                            if args.vararg:
-                                arg_names.append(args.vararg.arg)
-                            arg_names.extend(kwonlyarg_names)
-                            if args.kwarg:
-                                arg_names.append(args.kwarg.arg)
-
-                            updated_namespace = self._node_lookup_table.copy()
-                            updated_namespace = {
-                                **updated_namespace,
-                                **default_nodes,
-                                **kw_default_nodes
-                            }
-
-                            # TODO: Handle single-star args
-                            for index, arg_token in enumerate(next_token.args):
-                                arg_node = self._recursively_process_tokens(
-                                    arg_token.arg
-                                )
-
-                                if not arg_node:
-                                    continue
-
-                                if not arg_token.arg_name:
-                                    arg_name = arg_names[index]
-                                else:
-                                    arg_name = arg_token.arg_name
-
-                                updated_namespace[arg_name] = arg_node
-
-                            # BUG: Recursive functions will cause this to enter
-                            # an infinite loop
-
-                            func_transducer = Transducer(
-                                ast.Module(body=node.body),
-                                self.forest,
-                                updated_namespace
-                            )
-                            return_node = func_transducer._return_node
-
-                            if not return_node:
-                                break
-                            elif isinstance(return_node, ast.FunctionDef):
-                                return return_node
-
-                            node_stack.append(return_node)
-                            continue
+                        node_stack.append(return_node)
+                        continue # BUG: This double-counts the next token (need to skip next token)
 
                     # TODO: Test this (function reassignment, etc.)
                     return node
@@ -203,7 +214,7 @@ class Transducer(ast.NodeVisitor):
                 self._node_lookup_table[token_str] = child_node
                 node_stack.append(child_node)
             else: # Base node doesn't exist; abort processing
-                continue # break
+                continue # QUESTION: break?
 
         if not node_stack:
             return None
@@ -441,8 +452,7 @@ class Transducer(ast.NodeVisitor):
 
     @utils.reference_handler
     def visit_Call(self, node):
-        if isinstance(node.func, ast.Name) and node.func.id in BUILT_IN_FUNCS:
-            self.generic_visit()
+        pass
 
     @utils.reference_handler
     def visit_Subscript(self, node):
