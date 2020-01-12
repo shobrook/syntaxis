@@ -414,29 +414,110 @@ class Transducer(ast.NodeVisitor):
 
     ## Control Flow Handlers ##
 
-    # def visit_If(self, node):
-    #     pass
-    #
-    # def visit_Try(self, node):
-    #     pass
-    #
-    # def visit_While(self, node):
-    #     pass
-    #
+    def visit_If(self, node):
+        # test, body, orelse
+        self.generic_visit(node.test)
+
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=self._node_lookup_table.copy()
+        )
+
+        # TODO: Process each branch independently (i.e. process assuming that
+        # the first If evaluates, then assuming the first If doesn't evaluate
+        # but the first elif does, and so on).
+
+        # QUESTION: For now, maybe just process the absolute minimum? So: if
+        # a K2 = K1 or K = U assignment is made in the body, then remove it from
+        # the parent context. If a U = K assignment is made, don't let it apply
+        # to the parent context. This can be hwat happens when conservative=True
+
+        for else_node in node.orelse:
+            self.visit_If(else_node)
+
+        # QUESTION: What about:
+            # import foo
+            # for x in y:
+            #    if True:
+            #        continue
+            #    z = foo()
+        # We can't know if `z = foo()` is ever evaluated.
+
+    def visit_Try(self, node):
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=self._node_lookup_table.copy()
+        )
+
+        # TODO: Process branches independently
+
+        for except_handler_node in node.handlers:
+            self.visit_ExceptHandler(except_handler_node)
+
+        # Executes only if node.body doesn't throw an exception
+        for else_node in node.orelse:
+            self.visit_If(else_node)
+
+        # node.finalbody evaluates no matter what
+        self.generic_visit(ast.Module(body=node.finalbody))
+
+    def visit_ExceptHandler(self, node):
+        namespace = self._node_lookup_table.copy()
+
+        if node.type:
+            tokenized_exception = utils.recursively_tokenize_node(node.type, [])
+            exception_node = self._recursively_process_tokens(tokenized_exception)
+
+            if node.name: # except A as B
+                tokenized_alias = utils.recursively_tokenize_node(node.name, [])
+                alias_str = utils.stringify_tokenized_nodes(tokenized_alias)
+
+                if not exception_node:
+                    del namespace[alias_str]
+                else:
+                    namespace[alias_str] = exception_node
+
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=namespace
+        )
+
+    def visit_While(self, node):
+        self.generic_visit(node.test)
+
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=self._node_lookup_table.copy()
+        )
+
+        # Only executed when the while condition becomes False. If you break out
+        # of the loop or if an exeception is raised, it won't be executed.
+        else_transducer = Transducer(
+            tree=node.orelse,
+            forest=self.forest,
+            namespace=self._node_lookup_table.copy()
+        )
+
     # def visit_For(self, node):
     #     pass
     #
     # def visit_AsyncFor(self, node):
     #     self.visit_For(node)
-    #
-    # def visit_With(self, node):
-    #     pass
-    #
-    # def visit_AsyncWith(self, node):
-    #     self.visit_With(node)
-    #
-    # def visit_withitem(self, node):
-    #     pass
+
+    def visit_withitem(self, node):
+        if isinstance(node.optional_vars, ast.Name):
+            self._process_assignment(
+                target=node.optional_vars,
+                value=node.context_expr
+            )
+        elif isinstance(node.optional_vars, ast.Tuple):
+            pass # TODO
+        elif isinstance(node.optional_vars, ast.List):
+            pass # TODO
 
     ## Reference Handlers ##
 
