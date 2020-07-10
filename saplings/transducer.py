@@ -7,6 +7,7 @@ from copy import deepcopy
 import utilities as utils
 
 
+# TODO: Change name
 class Transducer(ast.NodeVisitor):
     def __init__(self, tree, forest=[], namespace={}):
         # QUESTION: Add a `conservative` parameter? If True, only deductive
@@ -15,7 +16,7 @@ class Transducer(ast.NodeVisitor):
         # the body of an 'if' statement, conservative=True always assume the
         # body was executed.
 
-        # Looks up nodes (parse tree and AST) by their current alias
+        # Looks up nodes (module tree and AST) by their current alias
         self._node_lookup_table = namespace.copy() # QUESTION: Or deepcopy?
         self._uncalled_funcs, self._return_node = {}, None
 
@@ -29,7 +30,7 @@ class Transducer(ast.NodeVisitor):
                 namespace=func_namespace
             )
 
-    ## Helpers ##
+    ## Helper Functions ##
 
     def _process_func_args(self, args, defaults):
         num_args, arg_names = 0, []
@@ -138,89 +139,6 @@ class Transducer(ast.NodeVisitor):
 
         return is_data_structure
 
-    ## Main Processor ##
-
-    def _recursively_process_tokens(self, tokens, no_increment=False):
-        """
-        This is the master function for appending to an API tree. Takes a
-        potentially nested list of (token, type) tuples and searches
-        for equivalent nodes in the API forest. Once the terminal node of a
-        path of equivalent nodes has been reached, additional nodes are created
-        and added as children to the terminal node.
-
-        @param tokens: list of tokenized nodes, each as (token(s), type).
-        @param no_increment:
-        @param is_data_struct:
-
-        @return: list of references to parse tree nodes corresponding to the
-        tokens.
-        """
-
-        # Flattens nested tokens into a list s.t. if the current token
-        # references a node, then the next token is a child of that node
-
-        node_stack = []
-        for index, token in enumerate(tokens):
-            arg_nodes = []
-            is_data_structure = self._process_data_structure(token)
-
-            if is_data_structure:
-                break
-            elif isinstance(token, utils.ArgsToken):
-                for arg_token in token:
-                    node = self._recursively_process_tokens(arg_token.arg)
-                    arg_nodes.append(node)
-            elif isinstance(token, utils.IndexToken):
-                self._recursively_process_tokens(token.slice)
-
-            token_sequence = tokens[:index + 1]
-            token_str = utils.stringify_tokenized_nodes(token_sequence)
-            if token_str in self._node_lookup_table:
-                node = self._node_lookup_table[token_str]
-
-                if isinstance(node, ast.FunctionDef):
-                    is_last_token = index == len(tokens) - 1
-                    if not is_last_token:
-                        # Locally defined function call
-                        if node in self._uncalled_funcs:
-                            # Function is called for the first time
-                            del self._uncalled_funcs[node]
-
-                        return_node = self._process_local_func_call(
-                            func_node=node,
-                            namespace=self._node_lookup_table.copy(),
-                            args=tokens[index + 1].args
-                        )
-                        if not return_node:
-                            break # BUG: What if the next token is an ArgsToken?
-                        elif isinstance(return_node, ast.FunctionDef):
-                            return return_node
-
-                        node_stack.append(return_node)
-                        continue # BUG: This double-counts the next token (need to skip next token)
-
-                    # TODO: Test this (function reassignment, etc.)
-                    return node
-
-                if not no_increment:
-                    node.increment_count()
-
-                node_stack.append(node)
-            elif node_stack:  # Base node exists; create its child
-                child_node = utils.Node(str(token))
-                node_stack[-1].add_child(child_node)
-                self._node_lookup_table[token_str] = child_node
-                node_stack.append(child_node)
-            else: # Base node doesn't exist; abort processing
-                continue # QUESTION: break?
-
-        if not node_stack:
-            return None
-
-        return node_stack[-1]
-
-    ## Visitor Helpers ##
-
     def _process_module(self, module, alias_origin_module=True):
         """
         Takes the identifier for a module, sometimes a period-separated string
@@ -326,6 +244,104 @@ class Transducer(ast.NodeVisitor):
         elif not targ_node and val_node:
             self._node_lookup_table[targ_str] = val_node
 
+    def _diff_namespaces(self, namespace):
+        aliases_to_ignore = []
+        for alias, node in self._node_lookup_table.items():
+            if alias in namespace:
+                if namespace[alias] == node:
+                    continue
+                else: # K1 = K2
+                    aliases_to_ignore.append(alias)
+            else: # K = U
+                aliases_to_ignore.append(alias)
+
+        return aliases_to_ignore
+
+    ## Main Processor ##
+
+    def _recursively_process_tokens(self, tokens, no_increment=False):
+        """
+        This is the master function for appending to an API tree. Takes a
+        potentially nested list of (token, type) tuples and searches
+        for equivalent nodes in the API forest. Once the terminal node of a
+        path of equivalent nodes has been reached, additional nodes are created
+        and added as children to the terminal node.
+
+        @param tokens: list of tokenized nodes, each as (token(s), type).
+        @param no_increment:
+
+        @return: list of references to module tree nodes corresponding to the
+        tokens.
+        """
+
+        # QUESTION: Is this list of tokens connected in some way? Either as
+        # attributes, indices, or calls?
+
+        # Flattens nested tokens into a list s.t. if the current token
+        # references a node, then the next token is a child of that node
+
+        print(tokens)
+
+        node_stack = []
+        for index, token in enumerate(tokens):
+            arg_nodes = [] # What is this for?
+            is_data_structure = self._process_data_structure(token)
+
+            if is_data_structure:
+                break # TODO: Handle data structures (lists, dicts, sets, etc.)
+            elif isinstance(token, utils.ArgsToken):
+                for arg_token in token:
+                    node = self._recursively_process_tokens(arg_token.arg)
+                    arg_nodes.append(node)
+            elif isinstance(token, utils.IndexToken):
+                self._recursively_process_tokens(token.slice)
+
+            token_sequence = tokens[:index + 1]
+            token_str = utils.stringify_tokenized_nodes(token_sequence)
+            if token_str in self._node_lookup_table:
+                node = self._node_lookup_table[token_str]
+
+                if isinstance(node, ast.FunctionDef):
+                    is_last_token = index == len(tokens) - 1
+                    if not is_last_token:
+                        # Locally defined function call
+                        if node in self._uncalled_funcs:
+                            # Function is called for the first time
+                            del self._uncalled_funcs[node]
+
+                        return_node = self._process_local_func_call(
+                            func_node=node,
+                            namespace=self._node_lookup_table.copy(),
+                            args=tokens[index + 1].args
+                        )
+                        if not return_node:
+                            break # BUG: What if the next token is an ArgsToken?
+                        elif isinstance(return_node, ast.FunctionDef):
+                            return return_node
+
+                        node_stack.append(return_node)
+                        continue # BUG: This double-counts the next token (need to skip next token)
+
+                    # TODO: Test this (function reassignment, etc.)
+                    return node
+
+                if not no_increment:
+                    node.increment_count()
+
+                node_stack.append(node)
+            elif node_stack:  # Base node exists; create its child
+                child_node = utils.Node(str(token))
+                node_stack[-1].add_child(child_node)
+                self._node_lookup_table[token_str] = child_node
+                node_stack.append(child_node)
+            else: # Base node doesn't exist; abort processing
+                continue # QUESTION: break?
+
+        if not node_stack:
+            return None
+
+        return node_stack[-1]
+
     ## Aliasing Handlers ##
 
     def visit_Import(self, node):
@@ -398,7 +414,7 @@ class Transducer(ast.NodeVisitor):
     ## Context Handlers ##
 
     def visit_ClassDef(self, node):
-        pass
+        pass # TODO
 
     def visit_FunctionDef(self, node):
         # TODO: Handle decorators
@@ -407,7 +423,7 @@ class Transducer(ast.NodeVisitor):
         # of namespace?
 
         self._node_lookup_table[node.name] = node
-        self._uncalled_funcs[node] =  self._node_lookup_table.copy()
+        self._uncalled_funcs[node] = self._node_lookup_table.copy()
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
@@ -415,7 +431,6 @@ class Transducer(ast.NodeVisitor):
     ## Control Flow Handlers ##
 
     def visit_If(self, node):
-        # test, body, orelse
         self.generic_visit(node.test)
 
         body_transducer = Transducer(
@@ -434,7 +449,11 @@ class Transducer(ast.NodeVisitor):
         # to the parent context. This can be hwat happens when conservative=True
 
         for else_node in node.orelse:
-            self.visit_If(else_node)
+            # self.visit_If(else_node)
+            self.generic_visit(else_node)
+
+        for alias in self._diff_namespaces(body_transducer._node_lookup_table):
+            del self._node_lookup_table[alias]
 
         # QUESTION: What about:
             # import foo
@@ -451,7 +470,8 @@ class Transducer(ast.NodeVisitor):
             namespace=self._node_lookup_table.copy()
         )
 
-        # TODO: Process branches independently
+        for alias in self._diff_namespaces(body_transducer._node_lookup_table):
+            del self._node_lookup_table[alias]
 
         for except_handler_node in node.handlers:
             self.visit_ExceptHandler(except_handler_node)
@@ -484,6 +504,8 @@ class Transducer(ast.NodeVisitor):
             forest=self.forest,
             namespace=namespace
         )
+        for alias in self._diff_namespaces(body_transducer._node_lookup_table):
+            del self._node_lookup_table[alias]
 
     def visit_While(self, node):
         self.generic_visit(node.test)
