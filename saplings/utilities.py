@@ -4,14 +4,14 @@ from collections import defaultdict
 
 
 ######################
-# PARSE TREE UTILITIES
+# TREE/GRAPH UTILITIES
 ######################
 
 
 class Node(object):
     def __init__(self, id, children=[]):
         """
-        Parse tree node constructor. Each node represents a feature in a
+        Module tree node constructor. Each node represents a feature in a
         package's API. A feature is defined as an object, function, or variable
         that can only be used by importing the package.
 
@@ -169,7 +169,44 @@ class ComprehensionToken(object):
         return "[]"
 
 
-def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
+class OtherToken(object):
+    def __init__(self, node):
+        self.node = node
+
+
+BIN_OPS_TO_FUNCS = {
+    "Add": "__add__",
+    "Sub": "__sub__",
+    "Mult": "__mul__",
+    "Div": "__truediv__",
+    "FloorDiv": "__floordiv__",
+    "Mod": "__mod__",
+    "Pow": "__pow__",
+    "LShift": "__lshift__",
+    "RShift": "__rshift__",
+    "BitOr": "__or__",
+    "BitXor": "__xor__",
+    "BitAnd": "__and__",
+    "MatMult": "__matmul__"
+}
+COMPARE_OPS_TO_FUNCS = {
+    "Eq": "__eq__",
+    "NotEq": "__ne__",
+    "Lt": "__lt__",
+    "LtE": "__le__",
+    "Gt": "__gt__",
+    "GtE": "__ge__",
+    "Is": "__eq__",
+    "IsNot": "__ne__",
+    "In": "__contains__",
+    "NotIn": "__contains__"
+}
+
+
+# TODO: Repurpose this function for tokenizing ONLY function calls. Extend your
+# definition of a function call: indices (x[1:4]) are __index__ calls, operators
+# (x + y) are __add__ calls, etc.
+def recursively_tokenize_node(node, tokens):
     """
     Takes an AST node and recursively unpacks it into it's constituent nodes.
     For example, if the input node is "x.y.z()", this function will return
@@ -189,7 +226,7 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
     @return: list of tokenized nodes (tuples in form of (identifier, type)).
     """
 
-    if isinstance(node, ast.Name): # x
+    if isinstance(node, ast.Name):
         tokens.append(NameToken(node.id))
         return tokens[::-1]
     elif isinstance(node, ast.Call):
@@ -211,17 +248,10 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
 
         tokens.append(ArgsToken(tokenized_args))
         return recursively_tokenize_node(node.func, tokens)
-
-        if isinstance(node.func, ast.Name): # y()
-            tokens.append(NameToken(node.func.id))
-            return tokens[::-1]
-        elif isinstance(node.func, ast.Attribute): # x.y()
-            tokens.append(NameToken(node.func.attr))
-            return recursively_tokenize_node(node.func.value, tokens)
-    elif isinstance(node, ast.Attribute): # x.y
+    elif isinstance(node, ast.Attribute):
         tokens.append(NameToken(node.attr))
         return recursively_tokenize_node(node.value, tokens)
-    elif isinstance(node, ast.Subscript): # x[]
+    elif isinstance(node, ast.Subscript):
         slice = []
         if isinstance(node.slice, ast.Index):
             slice = recursively_tokenize_node(node.slice.value, [])
@@ -262,15 +292,41 @@ def recursively_tokenize_node(node, tokens): # DOES ITS JOB SO FAR
         ))
         return tokens[::-1]
     elif isinstance(node, ast.Lambda):
-        return [] # TODO
+        return [] # TODO: Handle in visit_Lambda
     elif isinstance(node, ast.IfExp):
-        return [] # TODO: Handle ternary assignments
+        return [] # TODO: Handle in visit_IfExp
     elif isinstance(node, ast.BinOp):
-        return [] # TODO: Handle stuff like 'x + y'
+        op_args = ArgsToken([ArgToken(
+            arg=recursively_tokenize_node(node.right, []),
+        )])
+        op_id = NameToken(BIN_OPS_TO_FUNCS[type(node.op).__name__])
+        tokens.extend([op_args, op_id])
+
+        return recursively_tokenize_node(node.left, tokens)
     elif isinstance(node, ast.BoolOp):
-        return [] # TODO: Handle stuff like 'x or y'
+        return [] # TODO: Handle in visit_BoolOp
     elif isinstance(node, ast.Compare):
-        return [] # TODO: Handle stuff like 'x > y'
+        operator = node.ops.pop(0)
+        comparator = node.comparators.pop(0)
+
+        if node.ops and node.comparators:
+            new_compare_node = ast.Compare(
+                left=comparator,
+                ops=node.ops,
+                comparators=node.comparators
+            )
+            op_args = ArgsToken([ArgToken(
+                arg=recursively_tokenize_node(new_compare_node, [])
+            )])
+        else:
+            op_args = ArgsToken([ArgToken(
+                arg=recursively_tokenize_node(comparator, [])
+            )])
+
+        op_id = NameToken(COMPARE_OPS_TO_FUNCS[type(operator).__name__])
+        tokens.extend([op_args, op_id])
+
+        return recursively_tokenize_node(node.left, tokens)
     elif isinstance(node, ast.Str):
         tokens.append(StrToken("\"" + node.s + "\""))
         return tokens[::-1]
