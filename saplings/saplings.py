@@ -8,7 +8,7 @@ import json
 import math
 from collections import defaultdict
 import utils
-from forest import APIForest
+from forest import Transducer
 from metrics import ProgramMetrics
 
 
@@ -31,7 +31,7 @@ class Saplings(object):
         else:
             raise Exception # TODO: Create custom exception
 
-        self._api_forest = APIForest(self.tree).dependency_trees
+        self._forest = Transducer(self.tree).forest
         self._program_metrics = ProgramMetrics(self.tree)
 
     ## Public Methods ##
@@ -108,7 +108,7 @@ class Saplings(object):
 
     def get_api_forest(self, flattened=False):
         dep_trees = {} if flattened else []
-        for tree in self._api_forest:
+        for tree in self._forest:
             if flattened:
                 dep_trees[tree.id] = {}
                 for path in tree.flatten()[1:]:
@@ -309,8 +309,8 @@ if __name__ == "__main__":
     sys.path = sys.path[1:] + ['']
 
     with open("./output.json", 'w') as output:
-        saplings = Saplings("../cases.py")
-        # saplings = Saplings("./cases.py")
+        # saplings = Saplings("../cases.py")
+        saplings = Saplings("../test.py")
 
         from pprint import pprint
         # pprint(saplings._program_metrics.method_deps)

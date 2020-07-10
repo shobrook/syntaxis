@@ -3,33 +3,12 @@
 #########
 
 
+# Standard Library
 import ast
 from collections import defaultdict
 
-# Local modules
-import utils
-
-
-##########
-# REDESIGN
-##########
-
-
-# Input is an AST.
-# ast.NodeVisitor performs a depth-first traversal on the AST.
-# Output is a forest; each tree represents the subset of an imported package’s
-# API that was used in the program. Each node includes a frequency value. Nodes
-# are not statically typed.
-
-# The Transducer class should hold the following mapping:
-    # {
-    #     "context1": {
-    #         "alias1": Node(),
-    #         ...
-    #     },
-    #     ...
-    # }
-# QUESTION: Can a single alias refer to multiple nodes at the same time, in one context? 
+# Local
+import utilities as utils
 
 
 ######
@@ -37,11 +16,9 @@ import utils
 ######
 
 
-# [] Rename forest.py to transducer.py
-# [] Remove "module" type from nodes; actually, remove all types
-# [] Infer input and return types of user-defined functions (and classes)
 # [] Inside funcs, block searching parent contexts for aliases equivalent to parameter names (unless it's self)
 # [] Debug the frequency analysis
+# [] Handle globals and nonlocals
 
 # Handling Functions #
 # - Save defined function names and their return types in a field (search field when processing tokens)
@@ -50,29 +27,14 @@ import utils
 #   else in the function body has already been processed.
 
 class Transducer(ast.NodeVisitor):
-    def __init__(self, input_tree):
-        # IDEA: The entire context/aliasing system can be refactored such that
-        # a single dict holds a mapping from contexts to alive and dead nodes.
-        # This could make search more efficient and at the very least make this
-        # code easier to read.
+    def __init__(self, tree, forest=[], namespace={}):
+        # QUESTION: Add a `conservative` parameter?
 
-        self.tree = input_tree
-        self.forest = [] # Holds root nodes of output trees
+        self._node_lookup_table = dict(namespace)
+        self.conditional_assignments = []
 
-        # # OPTIMIZE: Turns AST into doubly-linked tree
-        # for node in ast.walk(self.tree):
-        #     for child in ast.iter_child_nodes(node):
-        #         child.parent = node
-
-        self._context_stack = ["global"] # Keeps track of current context
-        self._context_to_string = lambda: '.'.join(self._context_stack)
-
-        # QUESTION: Is this needed?
-        self._in_conditional = False # Flag for whether inside conditional block or not
-        # Holds functions that clear aliases manipulated inside a conditional block
-        self._conditional_handlers = defaultdict(lambda: [])
-
-        self.visit(self.tree)
+        self.forest = forest  # Holds root nodes of output trees
+        self.visit(tree)  # Begins traversal
 
     ## Private Helpers ##
 
@@ -97,11 +59,11 @@ class Transducer(ast.NodeVisitor):
             if type == "comprehension":
                 for sub_token in content:
                     if sub_token[1] == "target":
-                        continue # TODO: Block search for targets when processing elts
+                        continue  # TODO: Block search for targets when processing elts
 
                     self._recursively_process_tokens(sub_token[0])
 
-                return True # TEMP: Return an alias map, or something
+                return True  # TEMP: Return an alias map, or something
             elif type == "array":
                 alias_map = {}
                 for idx, elmt in enumerate(content):
@@ -131,11 +93,11 @@ class Transducer(ast.NodeVisitor):
         #     return handle_data_structs(content, type)
 
         node_stack = []
-        curr_context = self._context_to_string()
 
         # Flattens nested tokens
         flattened_tokens = []
-        for idx, token in enumerate(tokens): # QUESTION: Does this need to be in a separate loop?
+        # QUESTION: Does this need to be in a separate loop?
+        for idx, token in enumerate(tokens):
             content, type = token
 
             if type == "call":
@@ -156,6 +118,8 @@ class Transducer(ast.NodeVisitor):
 
             flattened_tokens.append((content, type))
 
+        # This list of tokens should have the property of: if the current token
+        # is a node, then the next token is a child of that node
         for idx, token in enumerate(flattened_tokens):
             content, type = token
 
@@ -163,47 +127,20 @@ class Transducer(ast.NodeVisitor):
             if type in ("comprehension", "array", "hashmap"):
                 break
 
-            token_id = utils.stringify_tokenized_nodes(flattened_tokens[:idx + 1])
-            if not idx: # Beginning of iteration; find base token
-                for root in self.forest:
-                    matching_node = utils.find_matching_node(
-                        subtree=root,
-                        id=token_id,
-                        type_pattern="instance/module",
-                        context=curr_context
-                    )
+            token_id = utils.stringify_tokenized_nodes(
+                flattened_tokens[:idx + 1])
+            if token_id in self._node_lookup_table:
+                node = self._node_lookup_table[token_id]
 
-                    if matching_node: # Found match for base token, pushing to stack
-                        if not no_increment:
-                            matching_node.increment_count()
+                if not no_increment:
+                    node.increment_count()
 
-                        node_stack.append(matching_node)
-                        break
-            elif node_stack: # Stack exists, continue pushing to it
-                matching_node = utils.find_matching_node(
-                    subtree=node_stack[-1],
-                    id=token_id,
-                    type_pattern="instance",
-                    context=curr_context
-                )
-
-                if matching_node: # Found child node
-                    if not no_increment:
-                        matching_node.increment_count()
-                    node_stack.append(matching_node)
-                else: # No child node found, creating one
-                    child_node = utils.Node(
-                        id=content,
-                        type="instance",
-                        context=curr_context,
-                        alias=token_id
-                    )
-
-                    # If in_conditional, and not an assignment, then you wanna get rid of the if contexts...
-
-                    node_stack[-1].add_child(child_node)
-                    node_stack.append(child_node)
-            else: # Base token doesn't exist, abort processing
+                node_stack.append(node)
+            elif node_stack:  # Base token exists; create its child
+                node = node_stack[-1].add_child(utils.Node(content))
+                self._node_lookup_table[token_id] = node
+                node_stack.append(node)
+            else:  # Base token doesn't exist; abort processing
                 break
 
         return node_stack
@@ -214,27 +151,16 @@ class Transducer(ast.NodeVisitor):
         @param value: tokenized AST node on the right-hand-side of the assignment.
         """
 
-        is_data_struct = len(value) == 1 and value[0][1] in ("comprehension", "array", "hashmap")
-
-        curr_context = self._context_to_string()
-        parent_context = '.'.join(self._context_stack[:-1])
+        is_data_struct = len(value) == 1 and value[0][1] in (
+            "comprehension", "array", "hashmap")
         tokenized_target = utils.recursively_tokenize_node(target, [])
 
-        targ_matches = self._recursively_process_tokens(tokenized_target) # LHS
-        val_matches = self._recursively_process_tokens(value, is_data_struct=is_data_struct) # RHS
+        targ_matches = self._recursively_process_tokens(tokenized_target)  # LHS
+        val_matches = self._recursively_process_tokens(
+            value, is_data_struct=is_data_struct)  # RHS
 
-        alias = utils.stringify_tokenized_nodes(tokenized_target) # BUG: This is stringifying the non-flattened list of tokens
-        add_alias = lambda node: node.add_alias(curr_context, alias)
-        del_alias = lambda node: node.del_alias(curr_context, alias)
-
-        def del_conditional_aliases(nodes=[]):
-            # QUESTION: Do you even need an _in_conditional field?
-            if not self._in_conditional:
-                return
-
-            conditional_handler = lambda node: node.del_alias(parent_context, alias)
-            wrapper = lambda: list(map(conditional_handler, nodes))
-            self._conditional_handlers[curr_context].append(wrapper)
+        # BUG: This is stringifying the non-flattened list of tokens
+        alias = utils.stringify_tokenized_nodes(tokenized_target)
 
         # TODO: When you delete an alias after reassignment, delete `alias`
         # subscripts too. i.e. x = [1,2,3] then x is reassigned, and then nodes
@@ -242,24 +168,25 @@ class Transducer(ast.NodeVisitor):
 
         # TODO: Handle aliasing for is_data_struct case
 
-        if targ_matches and val_matches: # Known node reassigned to known node (K2 = K1)
+        # Type I: Known node reassigned to known node (K2 = K1)
+        if targ_matches and val_matches:
             targ_node, val_node = targ_matches[-1], val_matches[-1]
 
-            add_alias(val_node)
-            del_alias(targ_node)
-            del_conditional_aliases([targ_node, val_node])
-        elif targ_matches and not val_matches: # Known node reassigned to unknown node (K1 = U1)
+            self._node_lookup_table[alias] = val_node
+            self.conditional_assignments.append(alias)  # TODO: Double-check
+        # Type II: Known node reassigned to unknown node (K1 = U1)
+        elif targ_matches and not val_matches:
             targ_node = targ_matches[-1]
 
-            del_alias(targ_node)
-            del_conditional_aliases([targ_node])
-        elif not targ_matches and val_matches: # Unknown node assigned to known node (U1 = K1)
+            del self._node_lookup_table[alias]
+            self.conditional_assignments.append(alias)  # TODO: Double-check
+        # Type III: Unknown node assigned to known node (U1 = K1)
+        elif not targ_matches and val_matches:
             val_node = val_matches[-1]
 
-            add_alias(val_node)
-            del_conditional_aliases([val_node])
+            self._node_lookup_table[alias] = val_node
 
-    def _process_module(self, module, context, alias_root=True):
+    def _process_module(self, module, alias_origin_module=True):
         """
         Takes the identifier for a module, sometimes a period-separated string
         of sub-modules, and searches the API forest for a matching module. If no
@@ -267,7 +194,6 @@ class Transducer(ast.NodeVisitor):
         self.forest.
 
         @param module: identifier for the module.
-        @param context: context in which the module is imported.
         @param alias_root: flag for whether a newly created module node should
         be aliased.
 
@@ -275,50 +201,46 @@ class Transducer(ast.NodeVisitor):
         sub-modules.
         """
 
-        sub_modules = module.split('.') # For module.submodule1.submodule2...
+        sub_modules = module.split('.')  # For module.submodule1.submodule2...
         root_module = sub_modules[0]
         term_node = None
 
+        def find_matching_node(subtree, id):
+            for node in subtree.breadth_first():
+                if node.id == id:
+                    return node
+
+            return None
+
         for root in self.forest:
-            matching_module = utils.find_matching_node(
-                subtree=root,
-                id=root_module,
-                type_pattern="module"
-            )
+            matching_module = find_matching_node(root, root_module)
 
             if matching_module:
+                # QUESTION: Do you need to add this to the alias lookup table?
                 term_node = matching_module
                 break
 
         if not term_node:
-            term_node = utils.Node(
-                id=root_module,
-                type="module",
-                context=context,
-                alias=root_module if alias_root else '' # For `from X import Y`
-            )
+            root_node = utils.Node(root_module)
+            if alias_origin_module:  # False if `from X import Y`
+                self._node_lookup_table[root_module] = root_node
+
+            term_node = root_node
             self.forest.append(term_node)
 
         for idx in range(len(sub_modules[1:])):
             sub_module = sub_modules[idx + 1]
             sub_module_alias = '.'.join([root_module] + sub_modules[1:idx + 2])
 
-            matching_sub_module = utils.find_matching_node(
-                subtree=term_node,
-                id=sub_module,
-                type_pattern="instance",
-                context=None # QUESTION: Should this be context?
-            )
+            matching_sub_module = find_matching_node(term_node, sub_module)
 
             if matching_sub_module:
                 term_node = matching_sub_module
             else:
-                new_sub_module = utils.Node(
-                    id=sub_module,
-                    type="instance",
-                    context=context,
-                    alias=sub_module_alias if alias_root else '' # For `from X.Y import Z`
-                )
+                new_sub_module = utils.Node(sub_module)
+                if alias_origin_module:  # False if `from X.Y import Z`
+                    self._node_lookup_table[sub_module_alias] = new_sub_module
+
                 term_node.add_child(new_sub_module)
                 term_node = new_sub_module
 
@@ -327,65 +249,139 @@ class Transducer(ast.NodeVisitor):
     ## Context Handlers ##
 
     # @utils.context_handler
-    # def visit_Global(self, node):
-    #     # IDEA: Save pre-state of context_stack, set to ["global"],
-    #     # then set back to pre-state
-    #     return
+    def visit_ClassDef(self, node):
+        self.generic_visit(node)
 
     # @utils.context_handler
-    # def visit_Nonlocal(self, node):
-    #     return
-
-    # TODO: Handle function/class reassignments (and declarations within conditionals)
-
-    @utils.context_handler
-    def visit_ClassDef(self, node):
-        pass
-
-    @utils.context_handler
     def visit_FunctionDef(self, node):
-        pass
+        # NOTE: A function will be evaluated differently depending on when its
+        # called.
+
+        # ALGORITHM:
+        # When a FunctionDef is hit, add the node to a dictionary A =
+        # {"func_name": {"node": Node, "namespace": {...}}} and skip the traversal.
+        # When a Call is hit, check if the function name is in A.
+            # If it is, create a new Transducer with the current namespace passed in.
+            # Then, mark the function as "called."
+        # If a function is redefined, remove it from A.
+            # If it isn't marked as "called", first add to the uncalled list and
+            # then replace with new function in A.
+        # At the end of the traversal, create Transducers for each uncalled
+        # function.
+
+        # NOTE: Reassignments inside Functions don't have effects on the parent
+        # context (unless global is used).
+
+        # NOTE: When a function is evaluated following a call, its namespace needs
+        # to be adjusted to map parameter names to the call arguments.
+
+        # NOTE: When an uncalled function is evaluated, its namespace needs to be
+        # adjusted for the function's parameter names (remove them from namespace).
+
+        # NOTE: Functions can have multiple aliases and be assigned to things:
+            # def foo():
+            #    pass
+            # bar = foo
+            # bar()
+
+        # QUESTION: What about recursive functions? What about closures?
+
+        self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
     ## Control Flow Handlers ##
 
-    @utils.conditional_handler
+    # @utils.conditional_handler
     def visit_If(self, node):
-        contexts = []
+        try:
+            node_name = type(node.test).__name__
+            custom_visitor = getattr(self, ''.join(["visit_", node_name]))
+            custom_visitor(node.test)
+        except AttributeError:
+            self.generic_visit(node.test)
+
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=self._node_lookup_table
+        )
+
+        # Any Type I/II assignment (K2 = K1, K = U) should apply to child
+        # contexts and K2/K should be deleted from the parent context
+        # QUESTION: Run before or after visiting node.orelse?
+        for alias in body_transducer.conditional_assignments:
+            # QUESTION: What about the following scenario:
+            # import x
+            # x.foo()
+            # if True:
+            #    y = x.foo
+            #    x.foo = None
+            #    x.foo = y
+            # x.foo().please() # This won't register. The alias was changed in
+            # the If context, but then the change was reverted in some way.
+                # Can you just look at the resulting lookup table from the
+                # body_transducer?
+            del self._node_lookup_table[alias]
+
+        # TODO: Check that nodes in node.orelse don't also have an orelse
+        # property
         for else_node in node.orelse:
-            else_context = ''.join(["If", str(else_node.lineno)])
-            contexts.append('.'.join(self._context_stack + [else_context]))
             self.visit_If(else_node)
 
-        return contexts
+        # TODO: Check that nested Ifs work
+        # TODO: Check that Elifs and Elses work
 
-    @utils.conditional_handler
+        # TODO: Handle Functions/Classes that are defined inside an If body
+
+        # QUESTION: What about:
+            # import foo
+            # for x in y:
+            #    if True:
+            #        continue
+            #    z = foo()
+        # We can't know if `z = foo()` is ever evaluated.
+
+    # @utils.conditional_handler
     def visit_Try(self, node):
-        contexts = []
-        for except_handler in node.handlers:
-            except_context = ''.join(["ExceptHandler", str(except_handler.lineno)])
-            contexts.append('.'.join(self._context_stack + [except_context]))
-            self.visit_ExceptHandler(except_handler)
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=self._node_lookup_table
+        )
 
-        return contexts
+        for alias in body_transducer.conditional_assignments:
+            del self._node_lookup_table[alias]
+
+        for except_handler_node in node.handlers:
+            # TODO: Handle `name` assignments (i.e. except module.Exception as e)
+            self.visit_Try(except_handler_node)
 
         # QUESTION: How to handle node.orelse and node.finalbody?
             # node.finalbody is where all final assignments are made, and should
             # persist into the parent context
 
-    @utils.conditional_handler
-    def visit_ExceptHandler(self, node):
-        # TODO: Handle `name` assignments (i.e. except Exception as e)
-        return []
-
-    @utils.conditional_handler
+    # @utils.conditional_handler
     def visit_While(self, node):
-        return []
+        try:
+            node_name = type(node.test).__name__
+            custom_visitor = getattr(self, ''.join(["visit_", node_name]))
+            custom_visitor(node.test)
+        except AttributeError:
+            self.generic_visit(node.test)
+
+        body_transducer = Transducer(
+            tree=ast.Module(body=node.body),
+            forest=self.forest,
+            namespace=self._node_lookup_table
+        )
+
+        for alias in body_transducer.conditional_assignments:
+            del self._node_lookup_table[alias]
 
     def visit_For(self, node):
-        curr_context = self._context_to_string()
+        # TODO: Fix this up
 
         def del_aliases(target):
             """
@@ -420,6 +416,8 @@ class Transducer(ast.NodeVisitor):
         self.visit_For(node)
 
     def visit_withitem(self, node):
+        # TODO: Fix this up
+
         def get_nodes(n):
             tokens = utils.recursively_tokenize_node(n, [])
             alias = utils.stringify_tokenized_nodes(tokens)
@@ -431,44 +429,38 @@ class Transducer(ast.NodeVisitor):
             return nodes[-1], alias
 
         if node.optional_vars:
-            curr_context = self._context_to_string()
-
             value_node, value_alias = get_nodes(node.context_expr)
-            target_node, target_alias = get_nodes(node.optional_vars) # Name, Tuple, or List
+            target_node, target_alias = get_nodes(
+                node.optional_vars)  # Name, Tuple, or List
 
-            value_node.add_alias(curr_context, target_alias)
-            target_node.del_alias(curr_context, target_alias)
+            self._node_lookup_table[target_alias] = value_node
 
     ## Aliasing Handlers ##
 
     def visit_Import(self, node):
-        curr_context = self._context_to_string()
         for module in node.names:
-            if module.name.startswith('.'): # Ignores relative imports
+            if module.name.startswith('.'):  # Ignores relative imports
                 continue
 
             alias = module.asname if module.asname else module.name
             module_leaf_node = self._process_module(
                 module=module.name,
-                context=curr_context,
-                alias_root=not bool(module.asname)
+                alias_origin_module=not bool(module.asname)
             )
 
-            module_leaf_node.add_alias(curr_context, alias)
+            self._node_lookup_table[alias] = module_leaf_node
 
     def visit_ImportFrom(self, node):
-        if node.level: # Ignores relative imports
+        if node.level:  # Ignores relative imports
             return
 
-        curr_context = self._context_to_string()
         module_node = self._process_module(
             module=node.module,
-            context=curr_context,
-            alias_root=False
+            alias_origin_module=False
         )
 
         for alias in node.names:
-            if alias.name == '*': # Ignore star imports
+            if alias.name == '*':  # Ignore star imports
                 continue
 
             child_exists = False
@@ -477,30 +469,23 @@ class Transducer(ast.NodeVisitor):
             for child in module_node.children:
                 if alias.name == child.id:
                     child_exists = True
-                    if not alias_id in child.aliases[curr_context]:
-                        child.add_alias(curr_context, alias_id)
+                    self._node_lookup_table[alias_id] = child
 
                     break
 
             if not child_exists:
-                module_node.add_child(utils.Node(
-                    id=alias.name,
-                    type="instance",
-                    context=curr_context,
-                    alias=alias_id
-                ))
+                new_child = utils.Node(alias.name)
+                self._node_lookup_table[alias_id] = new_child
+
+                module_node.add_child(new_child)
 
     def visit_Assign(self, node):
-        curr_context = self._context_to_string()
-
         if isinstance(node.value, ast.Tuple):
-            node_tokenizer = lambda elt: utils.recursively_tokenize_node(elt, [])
+            def node_tokenizer(
+                elt): return utils.recursively_tokenize_node(elt, [])
             values = tuple(map(node_tokenizer, node.value.elts))
         else:
             values = utils.recursively_tokenize_node(node.value, [])
-
-        if curr_context == "global.FunctionDef#scrape_files277":
-            print(values)
 
         targets = node.targets if hasattr(node, "targets") else (node.target)
         for target in targets:
@@ -519,13 +504,13 @@ class Transducer(ast.NodeVisitor):
     def visit_AnnAssign(self, node):
         self.visit_Assign(node)
 
-    def visit_Name(self, node):
-        if isinstance(node.ctx, ast.Del):
-            pass  # TODO: Delete alias from tree
-        elif isinstance(node.ctx, ast.Load):
-            pass  # TODO: Increment count of node (beware of double counting)
-
-        return
+    # def visit_Name(self, node):
+    #     if isinstance(node.ctx, ast.Del):
+    #         pass  # TODO: Delete alias from tree
+    #     elif isinstance(node.ctx, ast.Load):
+    #         pass  # TODO: Increment count of node (beware of double counting)
+    #
+    #     return
 
     # TODO: Fix double-counting for all the default_handler visitors
 
@@ -542,6 +527,8 @@ class Transducer(ast.NodeVisitor):
         # Also possible that the best way to deal with this is by just having
         # one ast.Load visitor. Look into this more, i.e. what gets covered by
         # ast.Load.
+
+        # Or ast.Expression?
 
         return
 
@@ -568,3 +555,19 @@ class Transducer(ast.NodeVisitor):
     @utils.default_handler
     def visit_Lambda(self, node):
         return
+
+    ## Public Methods ##
+
+    def trees(self, flattened=False):
+        trees = {} if flattened else []
+        for tree in self.forest:
+            if flattened:
+                trees[tree.id] = {}
+                paths = tree.flatten()
+                for path in paths[1:]:
+                    print(path)
+                    trees[tree.id]['.'.join(path[0])] = path[1]
+            else:
+                trees.append(tree.to_dict(debug=True))
+
+        return trees

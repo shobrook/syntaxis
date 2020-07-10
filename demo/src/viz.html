@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Animating Changes in Force Diagram</title>
+    <link
+      href="https://fonts.googleapis.com/css?family=Roboto:100,300,400"
+      rel="stylesheet"
+    />
+    <script src="http://d3js.org/d3.v3.min.js"></script>
+    <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.11.0/jquery.min.js"></script>
+    <style>
+      .link {
+        stroke: #08383f;
+        stroke-width: 2px;
+      }
+
+      .node {
+        stroke: #fff;
+        stroke-width: 2px;
+      }
+
+      .textClass {
+        stroke: #08383f;
+        font-family: "Roboto", sans-serif;
+        font-weight: normal;
+        stroke-width: 0.5;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <button onclick="addNodes()">animate me</button>
+    <script>
+      var graph;
+      function myGraph() {
+        /* Instance Methods */
+
+        this.addNode = function(id) {
+          nodes.push({ id: id }); // { id }
+          update();
+        };
+
+        this.addLink = (source, target, value) => {
+          links.push({
+            source: findNode(source),
+            target: findNode(target),
+            value: value
+          });
+          update();
+        };
+
+        /* Helpers */
+
+        const findNode = id => {
+          for (let n in nodes) {
+            if (nodes[n]["id"] === id) return nodes[n];
+          }
+        };
+
+        const findNodeIndex = id => {
+          for (let i = 0; i < nodes.length; i++) {
+            if (nodes[i].id == id) {
+              return i;
+            }
+          }
+        };
+
+        /* Visualization Setup */
+
+        var width = 960;
+        var height = 450;
+
+        // var color = d3.scale.category20();
+
+        var svg = d3
+          .select("body")
+          .append("svg:svg")
+          .attr("width", width)
+          .attr("height", height)
+          .attr("id", "svg")
+          .attr("pointer-events", "all")
+          .attr("viewBox", "0 0 " + width + " " + height)
+          .attr("perserveAspectRatio", "xMinYMid")
+          .append("svg:g");
+
+        var force = d3.layout.force();
+
+        var nodes = force.nodes();
+        var links = force.links();
+
+        const update = () => {
+          var link = svg.selectAll("line").data(links, l => {
+            return l.source.id + "-" + l.target.id;
+          });
+
+          link
+            .enter()
+            .append("line")
+            .attr("id", l => {
+              return l.source.id + "-" + l.target.id;
+            })
+            .attr("stroke-width", function(d) {
+              return d.value / 10;
+            })
+            .attr("class", "link")
+            .append("title")
+            .text(d => {
+              return d.value;
+            });
+
+          link.exit().remove();
+
+          var node = svg.selectAll("g.node").data(nodes, d => {
+            return d.id;
+          });
+
+          node
+            .enter()
+            .append("g")
+            .attr("class", "node")
+            .call(force.drag);
+
+          node
+            .append("svg:circle")
+            .attr("r", 12)
+            .attr("id", d => {
+              return "Node;" + d.id;
+            })
+            .attr("class", "nodeStrokeClass")
+            .attr("fill", "#3EADA1"); // d => color(d.id)
+          // .attr("stroke", "#08383F"); // d => d3.rgb(color(d.id)).darker()
+
+          node
+            .append("svg:text")
+            .attr("class", "textClass")
+            .attr("x", 14)
+            .attr("y", ".31em")
+            .text(d => {
+              return d.id;
+            });
+
+          node.exit().remove();
+
+          force.on("tick", function(e) {
+            let k = 6 * e.alpha;
+
+            link
+              .each(d => {
+                d.source.y -= k;
+                d.target.y += k;
+              })
+              .attr("x1", d => {
+                return d.source.x;
+              })
+              .attr("y1", d => {
+                return d.source.y;
+              })
+              .attr("x2", d => {
+                return d.target.x;
+              })
+              .attr("y2", d => {
+                return d.target.y;
+              });
+
+            node.attr("transform", d => {
+              return "translate(" + d.x + "," + d.y + ")";
+            });
+          });
+
+          force
+            .gravity(0.05)
+            .distance(100)
+            .charge(-350)
+            .size([width, height])
+            .start();
+        };
+
+        update();
+      }
+
+      function drawGraph() {
+        graph = new myGraph("#svgdiv");
+
+        graph.addNode("urwid");
+
+        keepNodesOnTop();
+
+        // callback for the changes in the network
+        let step = -1;
+        function nextval() {
+          step++;
+          return 2000 + 1500 * step; // initial time, wait time
+        }
+
+        setTimeout(function() {
+          graph.addNode("Widget");
+          graph.addLink("urwid", "Widget", "20");
+          keepNodesOnTop();
+        }, nextval());
+
+        setTimeout(function() {
+          graph.addNode("Canvas");
+          graph.addLink("urwid", "Canvas", "20");
+          keepNodesOnTop();
+        }, nextval());
+
+        setTimeout(function() {
+          graph.addNode("Main");
+          graph.addLink("Canvas", "Main", "20");
+          keepNodesOnTop();
+        }, nextval());
+
+        setTimeout(function() {
+          graph.addNode("CURSOR");
+          graph.addLink("Canvas", "CURSOR", "20");
+          keepNodesOnTop();
+        }, nextval());
+      }
+
+      // drawGraph();
+
+      // because of the way the network is created, nodes are created first, and links second,
+      // so the lines were on top of the nodes, this just reorders the DOM to put the svg:g on top
+      function keepNodesOnTop() {
+        $(".nodeStrokeClass").each(function(index) {
+          var gnode = this.parentNode;
+          gnode.parentNode.appendChild(gnode);
+        });
+      }
+
+      function addNodes() {
+        d3.select("svg").remove();
+        drawGraph();
+      }
+    </script>
+  </body>
+</html>
