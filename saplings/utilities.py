@@ -169,11 +169,6 @@ class ComprehensionToken(object):
         return "[]"
 
 
-class OtherToken(object):
-    def __init__(self, node):
-        self.node = node
-
-
 BIN_OPS_TO_FUNCS = {
     "Add": "__add__",
     "Sub": "__sub__",
@@ -203,27 +198,32 @@ COMPARE_OPS_TO_FUNCS = {
 }
 
 
-# TODO: Repurpose this function for tokenizing ONLY function calls. Extend your
-# definition of a function call: indices (x[1:4]) are __index__ calls, operators
-# (x + y) are __add__ calls, etc.
+def tokenize_slice(slice):
+    if isinstance(slice, ast.Index): # e.g. x[1]
+        yield recursively_tokenize_node(slice.value, [])
+    elif isinstance(slice, ast.Slice): # e.g. x[1:2]
+        for partial_slice in (slice.lower, slice.upper, slice.step):
+            if not partial_slice:
+                continue
+
+            yield recursively_tokenize_node(partial_slice, [])
+
+# IDEA: Instead of calling recursively_tokenize_node, call self.generic_visit
+# and have the reference handlers (visit_Name, visit_Call, etc.) do the
+# tokenization and return the node; return None if not tokenizable
+
+# In _recursively_process_tokens, should you call self.generic_visit on the
+# arg nodes?
 def recursively_tokenize_node(node, tokens):
     """
-    Takes an AST node and recursively unpacks it into it's constituent nodes.
-    For example, if the input node is "x.y.z()", this function will return
-    [('x', "instance"), ('y', "instance"), ('z', "call")].
+    Takes a node representing a function call and recursively unpacks it into
+    its constituent tokens. A "function call" includes subscripts (e.g.
+    my_var[1:4] => my_var.__index__(1, 4)), binary operations (e.g. my_var + 10
+    => my_var.__add__(10)), comparisons (e.g. my_var > 10 =>
+    my_var.__gt__(10)), and ... .
 
-    The base tokens are "names" (instances). These are variable references. We
-    want to deconstruct every input node into a series of "name" tokens.
-
-    The following tokens contain nested tokens:
-        - "args" (call)
-        - "index" (subscript)
-        -
-
-    @param node: AST node.
-    @param tokens: token accumulator.
-
-    @return: list of tokenized nodes (tuples in form of (identifier, type)).
+    Each token in this list is a child of the previous token. The "base" token
+    are NameTokens. These are object references.
     """
 
     if isinstance(node, ast.Name):
@@ -252,59 +252,27 @@ def recursively_tokenize_node(node, tokens):
         tokens.append(NameToken(node.attr))
         return recursively_tokenize_node(node.value, tokens)
     elif isinstance(node, ast.Subscript):
-        slice = []
-        if isinstance(node.slice, ast.Index):
-            slice = recursively_tokenize_node(node.slice.value, [])
-        else: # ast.Slice (i.e. [1:2]), ast.ExtSlice (i.e. [1:2, 3])
-            slice = [] # TODO
+        slice = node.slice
+        slice_tokens = []
+        if isinstance(slice, ast.ExtSlice): # e.g. x[1:2, 3]
+            for dim_slice in slice.dims:
+                slice_tokens.extend(tokenize_slice(dim_slice))
+        else:
+            slice_tokens.extend(tokenize_slice(slice))
 
-        tokens.append(IndexToken(slice))
+        arg_tokens = ArgsToken([ArgToken(token) for token in slice_tokens])
+        subscript_name = NameToken("__index__")
+        tokens.extend([arg_tokens, subscript_name])
+
         return recursively_tokenize_node(node.value, tokens)
-    elif isinstance(node, ast.Dict):
-        keys = [recursively_tokenize_node(n, []) for n in node.keys]
-        vals = [recursively_tokenize_node(n, []) for n in node.values]
-
-        tokens.append(DictToken(keys, vals))
-        return tokens[::-1]
-    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        elts = [recursively_tokenize_node(n, []) for n in node.elts]
-
-        tokens.append(ArrayToken(elts))
-        return tokens[::-1]
-    elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-        iterables, targets = [], []
-        for generator in node.generators:
-            iterables.append(recursively_tokenize_node(generator.iter, []))
-            targets.append(recursively_tokenize_node(generator.target, []))
-
-        key, val = [], []
-        if hasattr(node, "elt"):
-            val = recursively_tokenize_node(node.elt, [])
-        elif hasattr(node, "key") and hasattr(node, "value"):
-            key = recursively_tokenize_node(node.key, [])
-            val = recursively_tokenize_node(node.value, [])
-
-        tokens.append(ComprehensionToken(
-            iterables=iterables,
-            targets=targets,
-            val=val,
-            key=key
-        ))
-        return tokens[::-1]
-    elif isinstance(node, ast.Lambda):
-        return [] # TODO: Handle in visit_Lambda
-    elif isinstance(node, ast.IfExp):
-        return [] # TODO: Handle in visit_IfExp
     elif isinstance(node, ast.BinOp):
         op_args = ArgsToken([ArgToken(
             arg=recursively_tokenize_node(node.right, []),
         )])
-        op_id = NameToken(BIN_OPS_TO_FUNCS[type(node.op).__name__])
-        tokens.extend([op_args, op_id])
+        op_name = NameToken(BIN_OPS_TO_FUNCS[type(node.op).__name__])
+        tokens.extend([op_args, op_name])
 
         return recursively_tokenize_node(node.left, tokens)
-    elif isinstance(node, ast.BoolOp):
-        return [] # TODO: Handle in visit_BoolOp
     elif isinstance(node, ast.Compare):
         operator = node.ops.pop(0)
         comparator = node.comparators.pop(0)
@@ -323,18 +291,18 @@ def recursively_tokenize_node(node, tokens):
                 arg=recursively_tokenize_node(comparator, [])
             )])
 
-        op_id = NameToken(COMPARE_OPS_TO_FUNCS[type(operator).__name__])
-        tokens.extend([op_args, op_id])
+        op_name = NameToken(COMPARE_OPS_TO_FUNCS[type(operator).__name__])
+        tokens.extend([op_args, op_name])
 
         return recursively_tokenize_node(node.left, tokens)
-    elif isinstance(node, ast.Str):
+    elif isinstance(node, ast.Str): # TODO: Handle these elsewhere
         tokens.append(StrToken("\"" + node.s + "\""))
         return tokens[::-1]
-    elif isinstance(node, ast.Num):
+    elif isinstance(node, ast.Num): # TODO: Handle these elsewhere
         tokens.append(StrToken(str(node.n)))
         return tokens[::-1]
     else:
-        return []
+        return [] # TODO: Return node
 
 
 def stringify_tokenized_nodes(tokens):

@@ -70,6 +70,7 @@ class Transducer(ast.NodeVisitor):
             func_params.args,
             func_params.defaults
         )
+
         kwonlyarg_names, kw_default_nodes = self._process_func_args(
             func_params.kwonlyargs,
             func_params.kw_defaults
@@ -111,33 +112,6 @@ class Transducer(ast.NodeVisitor):
             namespace
         )
         return func_transducer._return_node
-
-    def _process_data_structure(self, token):
-        is_data_structure = True
-
-        # TEMP: This can't handle something like [1,2,3, ...][0].foo()
-        if isinstance(token, utils.ComprehensionToken):
-            # NOTE: Comprehensions have their own namespace; assuming there
-            # is a visit_Comprehension function for updating nodes from
-            # comprehensions, you can create a new Transducer instance for
-            # this token (content should be the original comprehension node)
-            # with the namespace updated with the local comprehension
-            # variable(s).
-            pass
-        elif isinstance(token, utils.ArrayToken):
-            # TODO: Handle these (don't use a new Transducer object since
-            # data structures don't have their own namespaces)
-            pass
-        elif isinstance(token, utils.DictToken):
-            # TODO: Handle these (don't use a new Transducer object since
-            # data structures don't have their own namespaces)
-            pass
-        elif isinstance(token, utils.StrToken):
-            pass
-        else:
-            is_data_structure = False
-
-        return is_data_structure
 
     def _process_module(self, module, alias_origin_module=True):
         """
@@ -232,15 +206,15 @@ class Transducer(ast.NodeVisitor):
         targ_str = utils.stringify_tokenized_nodes(tokenized_target)
         # val_str = utils.stringify_tokenized_nodes(tokenized_value)
 
-        # Known node reassigned to other known node (K2 = K1)
+        # Type I: Known node reassigned to other known node (K2 = K1)
         if targ_node and val_node:
             self._node_lookup_table[targ_str] = val_node
             delete_all_sub_aliases(targ_str)
-        # Known node reassigned to unknown node (K1 = U1)
+        # Type II: Known node reassigned to unknown node (K1 = U1)
         elif targ_node and not val_node:
             del self._node_lookup_table[targ_str]
             delete_all_sub_aliases(targ_str)
-        # Unknown node assigned to known node (U1 = K1)
+        # Type III: Unknown node assigned to known node (U1 = K1)
         elif not targ_node and val_node:
             self._node_lookup_table[targ_str] = val_node
 
@@ -259,7 +233,7 @@ class Transducer(ast.NodeVisitor):
 
     ## Main Processor ##
 
-    def _recursively_process_tokens(self, tokens, no_increment=False):
+    def _recursively_process_tokens(self, tokens, increment_count=False):
         """
         This is the master function for appending to an API tree. Takes a
         potentially nested list of (token, type) tuples and searches
@@ -268,28 +242,21 @@ class Transducer(ast.NodeVisitor):
         and added as children to the terminal node.
 
         @param tokens: list of tokenized nodes, each as (token(s), type).
-        @param no_increment:
+        @param increment_count:
 
         @return: list of references to module tree nodes corresponding to the
         tokens.
         """
 
-        # QUESTION: Is this list of tokens connected in some way? Either as
-        # attributes, indices, or calls?
-
         # Flattens nested tokens into a list s.t. if the current token
         # references a node, then the next token is a child of that node
 
-        print(tokens)
-
         node_stack = []
         for index, token in enumerate(tokens):
-            arg_nodes = [] # What is this for?
-            is_data_structure = self._process_data_structure(token)
+            arg_nodes = [] # QUESTION: What is this for?
 
-            if is_data_structure:
-                break # TODO: Handle data structures (lists, dicts, sets, etc.)
-            elif isinstance(token, utils.ArgsToken):
+            # TODO: Look at these
+            if isinstance(token, utils.ArgsToken):
                 for arg_token in token:
                     node = self._recursively_process_tokens(arg_token.arg)
                     arg_nodes.append(node)
@@ -309,6 +276,7 @@ class Transducer(ast.NodeVisitor):
                             # Function is called for the first time
                             del self._uncalled_funcs[node]
 
+                        print(token_str)
                         return_node = self._process_local_func_call(
                             func_node=node,
                             namespace=self._node_lookup_table.copy(),
@@ -325,7 +293,7 @@ class Transducer(ast.NodeVisitor):
                     # TODO: Test this (function reassignment, etc.)
                     return node
 
-                if not no_increment:
+                if increment_count:
                     node.increment_count()
 
                 node_stack.append(node)
@@ -335,7 +303,8 @@ class Transducer(ast.NodeVisitor):
                 self._node_lookup_table[token_str] = child_node
                 node_stack.append(child_node)
             else: # Base node doesn't exist; abort processing
-                continue # QUESTION: break?
+                break # BUG: What if there's an upcoming ArgsToken that needs to
+                      # to be processed? Is replacing with continue good enough?
 
         if not node_stack:
             return None
@@ -346,7 +315,7 @@ class Transducer(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for module in node.names:
-            if module.name.startswith('.'):  # Ignores relative imports
+            if module.name.startswith('.'): # Ignores relative imports
                 continue
 
             alias = module.asname if module.asname else module.name
@@ -358,7 +327,7 @@ class Transducer(ast.NodeVisitor):
             self._node_lookup_table[alias] = module_leaf_node
 
     def visit_ImportFrom(self, node):
-        if node.level:  # Ignores relative imports
+        if node.level: # Ignores relative imports
             return
 
         module_node = self._process_module(
@@ -367,7 +336,7 @@ class Transducer(ast.NodeVisitor):
         )
 
         for alias in node.names:
-            if alias.name == '*':  # Ignore star imports
+            if alias.name == '*': # Ignore star imports
                 continue
 
             child_exists = False
@@ -524,6 +493,7 @@ class Transducer(ast.NodeVisitor):
             namespace=self._node_lookup_table.copy()
         )
 
+    # TODO: Handle for loops
     # def visit_For(self, node):
     #     pass
     #
@@ -559,11 +529,78 @@ class Transducer(ast.NodeVisitor):
     def visit_Subscript(self, node):
         pass
 
+    @utils.reference_handler
+    def visit_BinOp(self, node):
+        pass
+
+    @utils.reference_handler
+    def visit_Compare(self, node):
+        pass
+
+    ## Data Structures ##
+
+    # TODO: Allow Type I assignments to dictionaries, lists, sets, and tuples.
+    # Right now, assignments to data structures are treated as Type II. For
+    # example, "attr" would not be captured in the following script:
+    #   import module
+    #   my_var = [module.func0(), module.func1(), module.func2()]
+    #   my_var[0].attr
+
+    def _comprehension_helper(self, elts, generators):
+        namespace = self._node_lookup_table.copy()
+        child_ifs = []
+        for index, generator in enumerate(generators):
+            iter_node = ast.Subscript(
+                value=generator.iter,
+                slice=ast.Index(value=None),
+                ctx=ast.Load()
+            ) # We treat the target as a subscript of iter
+            iter_tokens = utils.recursively_tokenize_node(iter_node, [])
+
+            if not index:
+                iter_tree_node = self._recursively_process_tokens(iter_tokens)
+            else:
+                iter_tree_node = Transducer(
+                    tree=ast.Module(body=[]),
+                    forest=self.forest,
+                    namespace=namespace
+                )._recursively_process_tokens(iter_tokens)
+
+            # TODO: Handle when generator.target is ast.Tuple
+            targ_tokens = utils.recursively_tokenize_node(generator.target, [])
+            targ_str = utils.stringify_tokenized_nodes(targ_tokens)
+
+            if iter_tree_node: # QUESTION: Needed? If so, might be needed elsewhere too
+                namespace[targ_str] = iter_tree_node
+
+            child_ifs.extend(generator.ifs)
+
+        Transducer(
+            tree=ast.Module(body=child_ifs + elts),
+            forest=self.forest,
+            namespace=namespace
+        )
+
+    def visit_ListComp(self, node):
+        self._comprehension_helper([node.elt], node.generators)
+
+    def visit_SetComp(self, node):
+        return self.visit_ListComp(node)
+
+    def visit_GeneratorExp(self, node):
+        return self.visit_ListComp(node)
+
+    def visit_DictComp(self, node):
+        self._comprehension_helper([node.key, node.value], node.generators)
+
     ## Miscellaneous ##
 
     def visit_Return(self, node):
         tokenized_node = utils.recursively_tokenize_node(node.value, [])
         self._return_node = self._recursively_process_tokens(tokenized_node)
+
+    # TODO: Handel globals, nonlocals
+    # TODO: Handle visit_Lambda, visit_IfExp
 
     ## Public Methods ##
 
