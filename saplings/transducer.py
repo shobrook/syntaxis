@@ -6,93 +6,136 @@ from copy import deepcopy
 # Local
 import utilities as utils
 
+# `process` means ...
 
-# TODO: Change name
-class Transducer(ast.NodeVisitor):
+# Calls of user-defined functions can be aliases to d-tree nodes. We don't know
+# until the function is evaluated, as the return type may depend on the inputs.
+
+class Saplings(ast.NodeVisitor):
     def __init__(self, tree, forest=[], namespace={}):
-        # QUESTION: Add a `conservative` parameter? If True, only deductive
-        # type inferences will be made. Else, predictive inferences will be
-        # made too. Example: if a module reference/alias is redefined inside
-        # the body of an 'if' statement, conservative=True always assume the
-        # body was executed.
+        """
+        Extracts dependency trees from imported modules in a program.
 
-        # Looks up nodes (module tree and AST) by their current alias
-        self._node_lookup_table = namespace.copy() # QUESTION: Or deepcopy?
-        self._uncalled_funcs, self._return_node = {}, None
+        Parameters
+        ----------
+        tree : ast.AST
+            the AST representation of the program to be analyzed, or a subtree
+        forest : list, optional
+            root nodes of existing module dependency trees
+        namespace : dict, optional
+            node lookup table (mapping of aliases to d-tree and AST nodes)
+        """
 
-        self.forest = forest # Holds root nodes of output trees
-        self.visit(tree) # Begins traversal
+        # Maps active aliases to dependency tree nodes (and ast.FunctionDef
+        # nodes)
+        self._node_lookup_table = namespace.copy() # QUESTION: Is .copy() needed?
 
-        # Processes uncalled local functions
-        for func_node, func_namespace in self._uncalled_funcs.items():
-            self._process_local_func_call(
-                func_node=func_node,
+        self._uncalled_funcs = {}
+        self._return_node = None
+
+        self.forest = forest # Holds root nodes of dependency trees
+        self.visit(tree) # Begins traversal of the AST
+
+        # If a function is defined but never called, we process the function
+        # body after the rest of the AST is processed. The body is processed
+        # in the state of the namespace in which it was defined.
+        for func_def_node, func_namespace in self._uncalled_funcs.items():
+            self._process_user_defined_func(
+                func_def_node=func_def_node,
                 namespace=func_namespace
             )
 
-    ## Helper Functions ##
+    ## Processors ##
 
-    def _process_func_args(self, args, defaults):
-        num_args, arg_names = 0, []
-        for arg in args:
-            arg_names.append(arg.arg)
-            num_args += 1
+    def _process_arg_defaults(self, arg_names, defaults):
+        """
+        Takes arguments from a user-defined function's signature and processes
+        their default values.
 
-        num_defaults, defaults = len(defaults), {}
+        Parameters
+        ----------
+        args : list
+            list of argument names (strings)
+        defaults : list
+            list of default values for the args (ast.AST nodes)
+
+        Returns
+        -------
+        dict
+            mapping of argument names to their default value's d-tree node
+        """
+
+        num_args, num_defaults = len(arg_names), len(defaults)
+        arg_to_default_node = {}
         for index, default in enumerate(defaults):
-            arg_name_index = index + (num_args - num_defaults)
-
-            # Only kw_defaults can be None
-            if not default:
+            if not default: # Only kw_defaults can be None
                 continue
 
-            tokenized_default = utils.recursively_tokenize_node(
-                default,
-                []
-            )
-            # BUG: Default values should be processed in a separate transducer
-            # with the same namespace as the one the function was defined in
-            default_node = self._recursively_process_tokens(tokenized_default)
+            arg_name_index = index + (num_args - num_defaults)
+            arg_name = arg_names[arg_name_index]
 
-            default_node, default_node_type = default_node
+            # BUG: Default values should be processed in a separate Saplings
+            # instance with the same namespace as the one the function was
+            # defined in
+            tokenized_default = utils.recursively_tokenize_node(default, [])
+            default_node = self._process_connected_tokens(tokenized_default)
+
             if not default_node:
                 continue
 
-            arg_name = arg_names[arg_name_index]
-            defaults[arg_name] = default_node
+            arg_to_default_node[arg_name] = default_node
 
-        return arg_names, defaults
+        return arg_to_default_node
 
+    def _process_user_defined_func(self, func_def_node, namespace, arg_vals=[]):
+        """
+        Processes the arguments and body of a user-defined function.
 
-    def _process_local_func_call(self, func_node, namespace, args=[]):
-        func_params = func_node.args
-        arg_names, default_nodes = self._process_func_args(
-            func_params.args,
-            func_params.defaults
+        Parameters
+        ----------
+        func_def_node : ast.FunctionDef
+            AST node holding the signature and body of the function being called
+        namespace : dict
+            namespace in which the function was defined
+        arg_vals : list, optional
+            arguments passed into the function when called (list of
+            utils.ArgTokens)
+
+        Returns
+        -------
+        utils.Node (or None)
+            d-tree node corresponding to the return value of the function
+        """
+
+        func_params = func_def_node.args
+
+        arg_names = [arg.arg for arg in func_params.args]
+        kwonlyarg_names = [arg.arg for arg in func_params.kwonlyargs]
+
+        default_nodes = self._process_arg_defaults(
+            arg_names=arg_names,
+            defaults=func_params.defaults
+        )
+        kw_default_nodes = self._process_arg_defaults(
+            arg_names=kwonlyarg_names,
+            defaults=func_params.kw_defaults
         )
 
-        kwonlyarg_names, kw_default_nodes = self._process_func_args(
-            func_params.kwonlyargs,
-            func_params.kw_defaults
-        )
-
+        # Consolidate arg names
         if func_params.vararg:
             arg_names.append(func_params.vararg.arg)
         arg_names.extend(kwonlyarg_names)
         if func_params.kwarg:
             arg_names.append(func_params.kwarg.arg)
 
-        namespace = {
-            **namespace,
-            **default_nodes,
-            **kw_default_nodes
-        }
+        # Update namespace with default values
+        func_namespace = {**namespace, **default_nodes, **kw_default_nodes}
 
         # TODO: Handle single-star args
-        for index, arg_token in enumerate(args):
-            arg_node = self._recursively_process_tokens(
-                arg_token.arg
-            )
+        for index, arg_token in enumerate(arg_vals):
+            # QUESTION: What if arg_token.arg isn't tokenized (e.g. if it's a
+            # lambda or ternary expression)?
+            arg_node = self._process_connected_tokens(arg_token.arg)
 
             if not arg_node:
                 continue
@@ -104,28 +147,37 @@ class Transducer(ast.NodeVisitor):
 
             namespace[arg_name] = arg_node
 
-        # BUG: Recursive functions will cause this to enter an infinite loop
+        # TODO: Handle recursive functions (currently causes an infinite loop)
+        # TODO: Simply create ast.Assign objects for each default argument and
+        # prepend them to func_def_node.body –– let the Saplings instance
+        # below do the rest
 
-        func_transducer = Transducer(
-            ast.Module(body=func_node.body),
+        func_saplings_obj = Saplings(
+            ast.Module(body=func_def_node.body),
             self.forest,
             namespace
         )
-        return func_transducer._return_node
+        return func_saplings_obj._return_node
 
-    def _process_module(self, module, alias_origin_module=True):
+    def _process_module(self, module, standard_import=False):
         """
-        Takes the identifier for a module, sometimes a period-separated string
-        of sub-modules, and searches the API forest for a matching module. If no
-        match is found, new module nodes are generated and appended to
-        self.forest.
+        Takes a module and searches the d-tree forest for a matching root node.
+        If no match is found, new module nodes are generated and appended to the
+        forest.
 
-        @param module: identifier for the module.
-        @param alias_origin_module: flag for whether a newly created module node
-        should be aliased.
+        Parameters
+        ----------
+        module : string
+            identifier for a module, sometimes a period-separated string of
+            sub-modules
+        standard_import : bool
+            flag for whether the module was imported normally or the result of
+            `from X import Y`
 
-        @return: reference to the terminal Node object in the list of
-        sub-modules.
+        Returns
+        -------
+        utils.Node
+            reference to the terminal d-tree node for the module
         """
 
         sub_modules = module.split('.')  # For module.submodule1.submodule2...
@@ -149,7 +201,7 @@ class Transducer(ast.NodeVisitor):
 
         if not term_node:
             root_node = utils.Node(root_module)
-            if alias_origin_module:  # False if `from X import Y`
+            if standard_import:
                 self._node_lookup_table[root_module] = root_node
 
             term_node = root_node
@@ -165,7 +217,7 @@ class Transducer(ast.NodeVisitor):
                 term_node = matching_sub_module
             else:
                 new_sub_module = utils.Node(sub_module)
-                if alias_origin_module:  # False if `from X.Y import Z`
+                if standard_import:
                     self._node_lookup_table[sub_module_alias] = new_sub_module
 
                 term_node.add_child(new_sub_module)
@@ -175,33 +227,55 @@ class Transducer(ast.NodeVisitor):
 
     def _process_assignment(self, target, value):
         """
-        @param target: AST node on the left-hand-side of the assignment.
-        @param value: tokenized AST node on the right-hand-side of the
-        assignment.
+        Handles variable assignments. There are three types of variable
+        assignments that we consider:
+            1. An alias for a known d-tree node being reassigned to another
+               known d-tree node (K = K)
+            2. An alias for a known d-tree node being reassigned to an unknown
+               AST node (K = U)
+            3. An unknown alias being assigned to a known d-tree node (U = K)
+        For any one of these, the current namespace (self._node_lookup_table) is
+        modified.
+
+        Parameters
+        ----------
+        target : ast.AST
+            node representing the left-hand-side of the assignment
+        value : ast.AST
+            node representing the right-hand-side of the assignment
         """
 
         def delete_all_sub_aliases(targ_str):
+            """
+            If `my_var` is an alias, then `my_var()` and `my_var.attr` are
+            considered sub-aliases. This function takes aliases that have been
+            deleted or reassigned and deletes all of its sub-aliases.
+
+            Parameters
+            ----------
+            targ_str : string
+                string representation of the target node in the assignment
+            """
+
             sub_aliases = []
             for alias in self._node_lookup_table.keys():
-                is_attr_str = alias.startswith(targ_str + '(')
-                is_call_str = alias.startswith(targ_str + '.')
-                is_idx_str = alias.startswith(targ_str + '[')
-
-                if is_attr_str or is_call_str or is_idx_str:
-                    sub_aliases.append(alias)
+                for sub_alias_signifier in ('(', '.'):
+                    if alias.startswith(targ_str + sub_alias_signifier):
+                        sub_aliases.append(alias)
+                        break
 
             for alias in sub_aliases:
                 del self._node_lookup_table[alias]
 
         tokenized_target = utils.recursively_tokenize_node(target, tokens=[])
-        targ_node = self._recursively_process_tokens(tokenized_target)
+        targ_node = self._process_connected_tokens(tokenized_target)
 
         tokenized_value = utils.recursively_tokenize_node(value, tokens=[])
-        val_node = self._recursively_process_tokens(tokenized_value)
+        val_node = self._process_connected_tokens(tokenized_value)
 
-        # BUG: If value is a comprehension or data structure, self._recursively_process_tokens
-        # will not return a node. But if we have: targ = [node(i) for i in range(10)],
-        # \^targ\ should be an alias for node(). Ignore this for now.
+        # TODO: Handle assignments to data structures. For an assignment like
+        # foo = [bar(i) for i in range(10)], foo.__index__() should be an alias
+        # for bar().
 
         targ_str = utils.stringify_tokenized_nodes(tokenized_target)
         # val_str = utils.stringify_tokenized_nodes(tokenized_value)
@@ -218,50 +292,75 @@ class Transducer(ast.NodeVisitor):
         elif not targ_node and val_node:
             self._node_lookup_table[targ_str] = val_node
 
-    def _diff_namespaces(self, namespace):
-        aliases_to_ignore = []
-        for alias, node in self._node_lookup_table.items():
-            if alias in namespace:
-                if namespace[alias] == node:
-                    continue
-                else: # K1 = K2
-                    aliases_to_ignore.append(alias)
-            else: # K = U
-                aliases_to_ignore.append(alias)
-
-        return aliases_to_ignore
-
-    ## Main Processor ##
-
-    def _recursively_process_tokens(self, tokens, increment_count=False):
+    def _process_connected_tokens(self, tokens, increment_count=False):
         """
-        This is the master function for appending to an API tree. Takes a
-        potentially nested list of (token, type) tuples and searches
-        for equivalent nodes in the API forest. Once the terminal node of a
-        path of equivalent nodes has been reached, additional nodes are created
-        and added as children to the terminal node.
+        This is the master function for appendign to a d-tree. `tokens` is a
+        list of Name and Args tokens, representing a "connected construct" ––
+        meaning that, if the first token is an alias for a node in the d-tree,
+        the next token is a child of that node. Here's an example of a
+        connected construct:
 
-        @param tokens: list of tokenized nodes, each as (token(s), type).
-        @param increment_count:
+        ```python
+        module.attr.foo(module.bar[0] + 1, key=lambda x: x ** 2)
+        ```
 
-        @return: list of references to module tree nodes corresponding to the
-        tokens.
+        This expression is an `ast.Call` node which, when passed into
+        `utils.recursively_tokenize_node`, returns:
+
+        ```python
+        [
+            NameToken("module"),
+            NameToken("attr"),
+            NameToken("foo"),
+            ArgsToken([
+                ArgToken([
+                    NameToken("module"),
+                    NameToken("bar"),
+                    NameToken("__index__"),
+                    ArgsToken([
+                        ArgToken([ast.Num(0)])
+                    ]),
+                    NameToken("__add__"),
+                    ArgsToken([
+                        ArgToken([ast.Num(1)])
+                    ])
+                ]),
+                ArgToken([ast.Lambda(...)], arg_name="key")
+            ])
+        ]
+        ```
+
+        (Note that the `ast.Num` and `ast.Lambda` nodes are not connected to the
+        other tokens, and are represented as  AST nodes. These nodes are
+        processed by `self.generic_visit`.)
+
+        When these tokens are passed into `_process_connected_tokens`, the
+        following subtrees are created and added as children to the `module`
+        d-tree: `attr -> foo -> ()` and
+        `bar -> __index__ -> () -> __add__ -> ()`. And if `increment_count` is
+        set to `True`, then the frequency value of the terminal nodes in these
+        subtrees is incremented.
+
+        Parameters
+        ----------
+        tokens : list
+            list of tokenized AST nodes
+        increment_count : bool
+
+        Returns
+        -------
+        {utils.Node, None}
+            reference to the terminal node in the subtree
         """
-
-        # Flattens nested tokens into a list s.t. if the current token
-        # references a node, then the next token is a child of that node
 
         node_stack = []
         for index, token in enumerate(tokens):
             arg_nodes = [] # QUESTION: What is this for?
 
-            # TODO: Look at these
             if isinstance(token, utils.ArgsToken):
                 for arg_token in token:
-                    node = self._recursively_process_tokens(arg_token.arg)
+                    node = self._process_connected_tokens(arg_token.arg)
                     arg_nodes.append(node)
-            elif isinstance(token, utils.IndexToken):
-                self._recursively_process_tokens(token.slice)
 
             token_sequence = tokens[:index + 1]
             token_str = utils.stringify_tokenized_nodes(token_sequence)
@@ -276,11 +375,10 @@ class Transducer(ast.NodeVisitor):
                             # Function is called for the first time
                             del self._uncalled_funcs[node]
 
-                        print(token_str)
-                        return_node = self._process_local_func_call(
-                            func_node=node,
+                        return_node = self._process_user_defined_func(
+                            func_def_node=node,
                             namespace=self._node_lookup_table.copy(),
-                            args=tokens[index + 1].args
+                            arg_vals=tokens[index + 1].args
                         )
                         if not return_node:
                             break # BUG: What if the next token is an ArgsToken?
@@ -297,13 +395,13 @@ class Transducer(ast.NodeVisitor):
                     node.increment_count()
 
                 node_stack.append(node)
-            elif node_stack:  # Base node exists; create its child
+            elif node_stack: # Base node exists; create its child
                 child_node = utils.Node(str(token))
                 node_stack[-1].add_child(child_node)
                 self._node_lookup_table[token_str] = child_node
                 node_stack.append(child_node)
             else: # Base node doesn't exist; abort processing
-                break # BUG: What if there's an upcoming ArgsToken that needs to
+                break # TODO: What if there's an upcoming ArgsToken that needs to
                       # to be processed? Is replacing with continue good enough?
 
         if not node_stack:
@@ -315,13 +413,14 @@ class Transducer(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for module in node.names:
+            # QUESTION: Should we ignore relative imports?
             if module.name.startswith('.'): # Ignores relative imports
                 continue
 
             alias = module.asname if module.asname else module.name
             module_leaf_node = self._process_module(
                 module=module.name,
-                alias_origin_module=not bool(module.asname)
+                standard_import=not bool(module.asname)
             )
 
             self._node_lookup_table[alias] = module_leaf_node
@@ -332,7 +431,7 @@ class Transducer(ast.NodeVisitor):
 
         module_node = self._process_module(
             module=node.module,
-            alias_origin_module=False
+            standard_import=False
         )
 
         for alias in node.names:
@@ -380,7 +479,7 @@ class Transducer(ast.NodeVisitor):
     def visit_Delete(self, node):
         pass # TODO: Delete this alias
 
-    ## Context Handlers ##
+    ## Function and Class Definition Handlers ##
 
     def visit_ClassDef(self, node):
         pass # TODO
@@ -397,12 +496,29 @@ class Transducer(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
-    ## Control Flow Handlers ##
+    # TODO
+    # def visit_Lambda(self, node):
+    #     pass
+
+    ## Control Flow ##
+
+    def _diff_namespaces(self, namespace):
+        aliases_to_ignore = []
+        for alias, node in self._node_lookup_table.items():
+            if alias in namespace:
+                if namespace[alias] == node:
+                    continue
+                else: # K1 = K2
+                    aliases_to_ignore.append(alias)
+            else: # K = U
+                aliases_to_ignore.append(alias)
+
+        return aliases_to_ignore
 
     def visit_If(self, node):
         self.generic_visit(node.test)
 
-        body_transducer = Transducer(
+        body_saplings_obj = Saplings(
             tree=ast.Module(body=node.body),
             forest=self.forest,
             namespace=self._node_lookup_table.copy()
@@ -421,7 +537,7 @@ class Transducer(ast.NodeVisitor):
             # self.visit_If(else_node)
             self.generic_visit(else_node)
 
-        for alias in self._diff_namespaces(body_transducer._node_lookup_table):
+        for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
             del self._node_lookup_table[alias]
 
         # QUESTION: What about:
@@ -433,13 +549,13 @@ class Transducer(ast.NodeVisitor):
         # We can't know if `z = foo()` is ever evaluated.
 
     def visit_Try(self, node):
-        body_transducer = Transducer(
+        body_saplings_obj = Saplings(
             tree=ast.Module(body=node.body),
             forest=self.forest,
             namespace=self._node_lookup_table.copy()
         )
 
-        for alias in self._diff_namespaces(body_transducer._node_lookup_table):
+        for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
             del self._node_lookup_table[alias]
 
         for except_handler_node in node.handlers:
@@ -457,7 +573,7 @@ class Transducer(ast.NodeVisitor):
 
         if node.type:
             tokenized_exception = utils.recursively_tokenize_node(node.type, [])
-            exception_node = self._recursively_process_tokens(tokenized_exception)
+            exception_node = self._process_connected_tokens(tokenized_exception)
 
             if node.name: # except A as B
                 tokenized_alias = utils.recursively_tokenize_node(node.name, [])
@@ -468,18 +584,18 @@ class Transducer(ast.NodeVisitor):
                 else:
                     namespace[alias_str] = exception_node
 
-        body_transducer = Transducer(
+        body_saplings_obj = Saplings(
             tree=ast.Module(body=node.body),
             forest=self.forest,
             namespace=namespace
         )
-        for alias in self._diff_namespaces(body_transducer._node_lookup_table):
+        for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
             del self._node_lookup_table[alias]
 
     def visit_While(self, node):
         self.generic_visit(node.test)
 
-        body_transducer = Transducer(
+        body_saplings_obj = Saplings(
             tree=ast.Module(body=node.body),
             forest=self.forest,
             namespace=self._node_lookup_table.copy()
@@ -487,7 +603,7 @@ class Transducer(ast.NodeVisitor):
 
         # Only executed when the while condition becomes False. If you break out
         # of the loop or if an exeception is raised, it won't be executed.
-        else_transducer = Transducer(
+        else_saplings_obj = Saplings(
             tree=node.orelse,
             forest=self.forest,
             namespace=self._node_lookup_table.copy()
@@ -511,33 +627,33 @@ class Transducer(ast.NodeVisitor):
         elif isinstance(node.optional_vars, ast.List):
             pass # TODO
 
-    ## Reference Handlers ##
+    ## Connected Construct Handlers ##
 
-    @utils.reference_handler
+    @utils.connected_construct_handler
     def visit_Name(self, node):
         pass
 
-    @utils.reference_handler
+    @utils.connected_construct_handler
     def visit_Attribute(self, node):
         pass
 
-    @utils.reference_handler
+    @utils.connected_construct_handler
     def visit_Call(self, node):
         pass
 
-    @utils.reference_handler
+    @utils.connected_construct_handler
     def visit_Subscript(self, node):
         pass
 
-    @utils.reference_handler
+    @utils.connected_construct_handler
     def visit_BinOp(self, node):
         pass
 
-    @utils.reference_handler
+    @utils.connected_construct_handler
     def visit_Compare(self, node):
         pass
 
-    ## Data Structures ##
+    ## Data Structure Handlers ##
 
     # TODO: Allow Type I assignments to dictionaries, lists, sets, and tuples.
     # Right now, assignments to data structures are treated as Type II. For
@@ -558,13 +674,13 @@ class Transducer(ast.NodeVisitor):
             iter_tokens = utils.recursively_tokenize_node(iter_node, [])
 
             if not index:
-                iter_tree_node = self._recursively_process_tokens(iter_tokens)
+                iter_tree_node = self._process_connected_tokens(iter_tokens)
             else:
-                iter_tree_node = Transducer(
+                iter_tree_node = Saplings(
                     tree=ast.Module(body=[]),
                     forest=self.forest,
                     namespace=namespace
-                )._recursively_process_tokens(iter_tokens)
+                )._process_connected_tokens(iter_tokens)
 
             # TODO: Handle when generator.target is ast.Tuple
             targ_tokens = utils.recursively_tokenize_node(generator.target, [])
@@ -575,7 +691,7 @@ class Transducer(ast.NodeVisitor):
 
             child_ifs.extend(generator.ifs)
 
-        Transducer(
+        Saplings(
             tree=ast.Module(body=child_ifs + elts),
             forest=self.forest,
             namespace=namespace
@@ -597,10 +713,11 @@ class Transducer(ast.NodeVisitor):
 
     def visit_Return(self, node):
         tokenized_node = utils.recursively_tokenize_node(node.value, [])
-        self._return_node = self._recursively_process_tokens(tokenized_node)
+        self._return_node = self._process_connected_tokens(tokenized_node)
 
     # TODO: Handel globals, nonlocals
     # TODO: Handle visit_Lambda, visit_IfExp
+    # TODO: Handle generators (i.e. yields)
 
     ## Public Methods ##
 
