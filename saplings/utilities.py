@@ -132,43 +132,6 @@ class ArgToken(object):
         yield from self.arg
 
 
-class IndexToken(object):
-    def __init__(self, slice):
-        self.slice = slice
-
-    def __repr__(self):
-        if len(self.slice) == 1 and isinstance(self.slice[0], StrToken):
-            return '[' + str(self.slice[0]) + ']'
-
-        return "[]"
-
-
-class DictToken(object):
-    def __init__(self, keys, vals):
-        self.keys, self.vals = keys, vals
-
-    def __repr__(self):
-        return "{}"
-
-
-class ArrayToken(object):
-    def __init__(self, elts):
-        self.elts = elts
-
-    def __repr__(self):
-        return "[]"
-
-
-class ComprehensionToken(object):
-    def __init__(self, iterables, targets, val, key=None):
-        self.iterables, self.targets = iterables, targets
-        self.key, self.val = key, val
-        # self.if = if
-
-    def __repr__(self):
-        return "[]"
-
-
 BIN_OPS_TO_FUNCS = {
     "Add": "__add__",
     "Sub": "__sub__",
@@ -212,14 +175,14 @@ def tokenize_slice(slice):
 # and have the reference handlers (visit_Name, visit_Call, etc.) do the
 # tokenization and return the node; return None if not tokenizable
 
-# In _recursively_process_tokens, should you call self.generic_visit on the
+# In _process_connected_tokens, should you call self.generic_visit on the
 # arg nodes?
 def recursively_tokenize_node(node, tokens):
     """
-    Takes a node representing a function call and recursively unpacks it into
-    its constituent tokens. A "function call" includes subscripts (e.g.
-    my_var[1:4] => my_var.__index__(1, 4)), binary operations (e.g. my_var + 10
-    => my_var.__add__(10)), comparisons (e.g. my_var > 10 =>
+    Takes a node representing an identifier or function call and recursively
+    unpacks it into its constituent tokens. A "function call" includes
+    subscripts (e.g. my_var[1:4] => my_var.__index__(1, 4)), binary operations
+    (e.g. my_var + 10 => my_var.__add__(10)), comparisons (e.g. my_var > 10 =>
     my_var.__gt__(10)), and ... .
 
     Each token in this list is a child of the previous token. The "base" token
@@ -302,7 +265,7 @@ def recursively_tokenize_node(node, tokens):
         tokens.append(StrToken(str(node.n)))
         return tokens[::-1]
     else:
-        return [] # TODO: Return node
+        return [node]
 
 
 def stringify_tokenized_nodes(tokens):
@@ -342,10 +305,10 @@ def stringify_tokenized_nodes(tokens):
 #     return wrapper
 
 
-def reference_handler(func):
+def connected_construct_handler(func):
     def wrapper(self, node):
         tokens = recursively_tokenize_node(node, [])
-        self._recursively_process_tokens(tokens)
+        self._process_connected_tokens(tokens)
 
     return wrapper
 
