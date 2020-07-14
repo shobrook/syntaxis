@@ -1,7 +1,7 @@
 # Standard Library
 import ast
 from collections import defaultdict
-from copy import deepcopy
+from copy import copy
 
 # Local
 import utilities as utils
@@ -40,10 +40,6 @@ class Saplings(ast.NodeVisitor):
         # body after the rest of the AST is processed. The body is processed
         # in the state of the namespace in which it was defined.
         for func_def_node, func_namespace in self._uncalled_funcs.items():
-            print("func_def_node inside self._uncalled_funcs:")
-            print(func_def_node.name)
-            print(func_def_node)
-            print()
             self._process_user_defined_func(
                 func_def_node=func_def_node,
                 namespace=func_namespace
@@ -392,10 +388,6 @@ class Saplings(ast.NodeVisitor):
         for index, token in enumerate(tokens):
             if isinstance(token, utils.ArgsToken):
                 if func_def_node: # Evaluate the function call
-                    print("func_def_node inside self._process_connected_tokens:")
-                    print(func_def_node.name)
-                    print(func_def_node)
-                    print()
                     if func_def_node in self._uncalled_funcs:
                         del self._uncalled_funcs[func_def_node]
 
@@ -516,7 +508,9 @@ class Saplings(ast.NodeVisitor):
         self.visit_Assign(node)
 
     def visit_AugAssign(self, node):
-        pass # TODO: How should this be handled?
+        target = node.target
+        value = ast.BinOp(left=copy(target), op=node.op, right=node.value)
+        self._process_assignment(target, value)
 
     def visit_Delete(self, node):
         pass # TODO: Delete this alias
