@@ -11,6 +11,8 @@ import utilities as utils
 # Calls of user-defined functions can be aliases to d-tree nodes. We don't know
 # until the function is evaluated, as the return type may depend on the inputs.
 
+# TODO: Pass in self._uncalled_funcs into each child Saplings instance
+
 class Saplings(ast.NodeVisitor):
     def __init__(self, tree, forest=[], namespace={}):
         """
@@ -228,6 +230,28 @@ class Saplings(ast.NodeVisitor):
 
         return term_node
 
+    def _delete_all_sub_aliases(self, targ_str):
+        """
+        If `my_var` is an alias, then `my_var()` and `my_var.attr` are
+        considered sub-aliases. This function takes aliases that have been
+        deleted or reassigned and deletes all of its sub-aliases.
+
+        Parameters
+        ----------
+        targ_str : string
+            string representation of the target node in the assignment
+        """
+
+        sub_aliases = []
+        for alias in self._node_lookup_table.keys():
+            for sub_alias_signifier in ('(', '.'):
+                if alias.startswith(targ_str + sub_alias_signifier):
+                    sub_aliases.append(alias)
+                    break
+
+        for alias in sub_aliases:
+            del self._node_lookup_table[alias]
+
     def _process_assignment(self, target, value):
         """
         Handles variable assignments. There are three types of variable
@@ -248,28 +272,6 @@ class Saplings(ast.NodeVisitor):
             node representing the right-hand-side of the assignment
         """
 
-        def delete_all_sub_aliases(targ_str):
-            """
-            If `my_var` is an alias, then `my_var()` and `my_var.attr` are
-            considered sub-aliases. This function takes aliases that have been
-            deleted or reassigned and deletes all of its sub-aliases.
-
-            Parameters
-            ----------
-            targ_str : string
-                string representation of the target node in the assignment
-            """
-
-            sub_aliases = []
-            for alias in self._node_lookup_table.keys():
-                for sub_alias_signifier in ('(', '.'):
-                    if alias.startswith(targ_str + sub_alias_signifier):
-                        sub_aliases.append(alias)
-                        break
-
-            for alias in sub_aliases:
-                del self._node_lookup_table[alias]
-
         tokenized_target = utils.recursively_tokenize_node(target, tokens=[])
         targ_node = self._process_connected_tokens(tokenized_target)
 
@@ -286,11 +288,11 @@ class Saplings(ast.NodeVisitor):
         # Type I: Known node reassigned to other known node (K2 = K1)
         if targ_node and val_node:
             self._node_lookup_table[targ_str] = val_node
-            delete_all_sub_aliases(targ_str)
+            self._delete_all_sub_aliases(targ_str)
         # Type II: Known node reassigned to unknown node (K1 = U1)
         elif targ_node and not val_node:
             del self._node_lookup_table[targ_str]
-            delete_all_sub_aliases(targ_str)
+            self._delete_all_sub_aliases(targ_str)
         # Type III: Unknown node assigned to known node (U1 = K1)
         elif not targ_node and val_node:
             self._node_lookup_table[targ_str] = val_node
@@ -356,32 +358,7 @@ class Saplings(ast.NodeVisitor):
             reference to the terminal node in the subtree
         """
 
-        """
-        Gets complicated when ast.FunctionDefs are introduced.
-
-        ```python
-        import module
-
-        class MyObject():
-            def __init__(self):
-                pass
-
-            def foo(self, x):
-                return x.attr
-
-        my_obj = MyObject()
-        my_obj.foo(module).bar()
-        ```
-        ```python
-        import module
-
-        def foo(x):
-            return x.attr
-
-        foo(module).bar()
-        foo.__doc__
-        ```
-        """
+        # TODO: Handle user-defined function calls from CLASSES
 
         func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef) # TODO: Handle ast.Lambda
         node_stack, func_def_node = [], None
@@ -513,7 +490,11 @@ class Saplings(ast.NodeVisitor):
         self._process_assignment(target, value)
 
     def visit_Delete(self, node):
-        pass # TODO: Delete this alias
+        for target in node.targets:
+            target_tokens = utils.recursively_tokenize_node(target, [])
+            target_str = utils.stringify_tokenized_nodes(target_tokens)
+
+            self._delete_all_sub_aliases(target_str)
 
     ## Function and Class Definition Handlers ##
 
