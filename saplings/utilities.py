@@ -97,20 +97,20 @@ class Node(object):
 #####################
 
 
-class StrToken(object):
-    def __init__(self, str):
-        self.str = str
-
-    def __repr__(self):
-        return self.str
-
-
 class NameToken(object):
     def __init__(self, name):
         self.name = name
 
     def __repr__(self):
         return self.name
+
+
+class ArgToken(object):
+    def __init__(self, arg, arg_name=''):
+        self.arg, self.arg_name = arg, arg_name
+
+    def __iter__(self):
+        yield from self.arg
 
 
 class ArgsToken(object):
@@ -122,14 +122,6 @@ class ArgsToken(object):
 
     def __repr__(self):
         return "()"
-
-
-class ArgToken(object):
-    def __init__(self, arg, arg_name=''):
-        self.arg, self.arg_name = arg, arg_name
-
-    def __iter__(self):
-        yield from self.arg
 
 
 BIN_OPS_TO_FUNCS = {
@@ -258,12 +250,6 @@ def recursively_tokenize_node(node, tokens):
         tokens.extend([op_args, op_name])
 
         return recursively_tokenize_node(node.left, tokens)
-    elif isinstance(node, ast.Str): # TODO: Handle these elsewhere
-        tokens.append(StrToken("\"" + node.s + "\""))
-        return tokens[::-1]
-    elif isinstance(node, ast.Num): # TODO: Handle these elsewhere
-        tokens.append(StrToken(str(node.n)))
-        return tokens[::-1]
     else:
         return [node]
 
