@@ -40,10 +40,17 @@ class Saplings(ast.NodeVisitor):
         # body after the rest of the AST is processed. The body is processed
         # in the state of the namespace in which it was defined.
         for func_def_node, func_namespace in self._uncalled_funcs.items():
+            print("func_def_node inside self._uncalled_funcs:")
+            print(func_def_node.name)
+            print(func_def_node)
+            print()
             self._process_user_defined_func(
                 func_def_node=func_def_node,
                 namespace=func_namespace
             )
+
+            # QUESTION: What if self._return_node == func_def_node? In this
+            # case, it should be processed in the parent Saplings object.
 
     ## Processors ##
 
@@ -103,7 +110,7 @@ class Saplings(ast.NodeVisitor):
 
         Returns
         -------
-        utils.Node (or None)
+        {utils.Node, ast.FunctionDef, ast.AsyncFunctionDef, None}
             d-tree node corresponding to the return value of the function
         """
 
@@ -353,57 +360,92 @@ class Saplings(ast.NodeVisitor):
             reference to the terminal node in the subtree
         """
 
-        node_stack = []
-        for index, token in enumerate(tokens):
-            arg_nodes = [] # QUESTION: What is this for?
+        """
+        Gets complicated when ast.FunctionDefs are introduced.
 
+        ```python
+        import module
+
+        class MyObject():
+            def __init__(self):
+                pass
+
+            def foo(self, x):
+                return x.attr
+
+        my_obj = MyObject()
+        my_obj.foo(module).bar()
+        ```
+        ```python
+        import module
+
+        def foo(x):
+            return x.attr
+
+        foo(module).bar()
+        foo.__doc__
+        ```
+        """
+
+        func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef) # TODO: Handle ast.Lambda
+        node_stack, func_def_node = [], None
+        for index, token in enumerate(tokens):
             if isinstance(token, utils.ArgsToken):
-                for arg_token in token:
-                    node = self._process_connected_tokens(arg_token.arg)
-                    arg_nodes.append(node)
+                if func_def_node: # Evaluate the function call
+                    print("func_def_node inside self._process_connected_tokens:")
+                    print(func_def_node.name)
+                    print(func_def_node)
+                    print()
+                    if func_def_node in self._uncalled_funcs:
+                        del self._uncalled_funcs[func_def_node]
+
+                    return_node = self._process_user_defined_func(
+                        func_def_node=func_def_node,
+                        namespace=self._node_lookup_table.copy(),
+                        arg_vals=token.args
+                    ) # TODO: Handle tuples
+
+                    if isinstance(return_node, func_def_types):
+                        func_def_node = return_node
+                    else:
+                        func_def_node = None
+
+                    if return_node:
+                        node_stack.append(return_node)
+
+                    continue
+                else:
+                    for arg_token in token:
+                        arg_node = self._process_connected_tokens(
+                            tokens=arg_token.arg,
+                            increment_count=increment_count
+                        )
+            elif not isinstance(token, utils.NameToken): # token is ast.AST node
+                self.generic_visit(token)
+                continue # QUESTION: Should I do anything with the result of self.generic_visit()?
+
+            if func_def_node:
+                func_def_node = None
 
             token_sequence = tokens[:index + 1]
             token_str = utils.stringify_tokenized_nodes(token_sequence)
+
             if token_str in self._node_lookup_table:
                 node = self._node_lookup_table[token_str]
 
-                if isinstance(node, ast.FunctionDef):
-                    is_last_token = index == len(tokens) - 1
-                    if not is_last_token:
-                        # Locally defined function call
-                        if node in self._uncalled_funcs:
-                            # Function is called for the first time
-                            del self._uncalled_funcs[node]
-
-                        return_node = self._process_user_defined_func(
-                            func_def_node=node,
-                            namespace=self._node_lookup_table.copy(),
-                            arg_vals=tokens[index + 1].args
-                        )
-                        if not return_node:
-                            break # BUG: What if the next token is an ArgsToken?
-                        elif isinstance(return_node, ast.FunctionDef):
-                            return return_node
-
-                        node_stack.append(return_node)
-                        continue # BUG: This double-counts the next token (need to skip next token)
-
-                    # TODO: Test this (function reassignment, etc.)
-                    return node
-
-                if increment_count:
-                    node.increment_count()
+                if isinstance(node, func_def_types):
+                    func_def_node = node
+                    continue
 
                 node_stack.append(node)
-            elif node_stack: # Base node exists; create its child
+            elif node_stack: # Base node exists –– create and append its child
                 child_node = utils.Node(str(token))
                 node_stack[-1].add_child(child_node)
                 self._node_lookup_table[token_str] = child_node
                 node_stack.append(child_node)
-            else: # Base node doesn't exist; abort processing
-                break # TODO: What if there's an upcoming ArgsToken that needs to
-                      # to be processed? Is replacing with continue good enough?
 
+        if func_def_node:
+            return func_def_node
         if not node_stack:
             return None
 
@@ -523,6 +565,7 @@ class Saplings(ast.NodeVisitor):
             forest=self.forest,
             namespace=self._node_lookup_table.copy()
         )
+        self._uncalled_funcs = body_saplings_obj._uncalled_funcs
 
         # TODO: Process each branch independently (i.e. process assuming that
         # the first If evaluates, then assuming the first If doesn't evaluate
@@ -668,7 +711,7 @@ class Saplings(ast.NodeVisitor):
         for index, generator in enumerate(generators):
             iter_node = ast.Subscript(
                 value=generator.iter,
-                slice=ast.Index(value=None),
+                slice=ast.Index(value=ast.NameConstant(None)),
                 ctx=ast.Load()
             ) # We treat the target as a subscript of iter
             iter_tokens = utils.recursively_tokenize_node(iter_node, [])
