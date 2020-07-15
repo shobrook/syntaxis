@@ -8,10 +8,22 @@ import utilities as utils
 
 # `process` means ...
 
-# Calls of user-defined functions can be aliases to d-tree nodes. We don't know
-# until the function is evaluated, as the return type may depend on the inputs.
+# TODO: Pass in self._uncalled_funcs into each child Saplings instance (OR,
+# do a diff)
 
-# TODO: Pass in self._uncalled_funcs into each child Saplings instance
+# TODO: Test what happens if you define a function, then define another function with
+# the same name. Also test what happens if you do or don't call either of them.
+
+# How does self._uncalled_funcs handle this?
+# def foo():
+#     def bar():
+#         return
+#
+#     return
+#
+# bar()
+
+# TODO: self._uncalled_funcs shouldn't be called in some child Saplings instances
 
 class Saplings(ast.NodeVisitor):
     def __init__(self, tree, forest=[], namespace={}):
@@ -22,33 +34,50 @@ class Saplings(ast.NodeVisitor):
         ----------
         tree : ast.AST
             the AST representation of the program to be analyzed, or a subtree
-        forest : list, optional
+        forest : {list, optional}
             root nodes of existing module dependency trees
-        namespace : dict, optional
+        namespace : {dict, optional}
             node lookup table (mapping of aliases to d-tree and AST nodes)
+        uncalled_funcs : {dict, optional}
+            user-defined functions and the namespaces in which they were
+            defined
         """
 
         # Maps active aliases to dependency tree nodes (and ast.FunctionDef
         # nodes)
-        self._node_lookup_table = namespace.copy() # QUESTION: Is .copy() needed?
+        self._node_lookup_table = namespace
 
-        self._uncalled_funcs = {}
+        self._uncalled_funcs, self._called_funcs = {}, []
         self._return_node = None
 
         self.forest = forest # Holds root nodes of dependency trees
         self.visit(tree) # Begins traversal of the AST
 
         # If a function is defined but never called, we process the function
-        # body after the rest of the AST is processed. The body is processed
-        # in the state of the namespace in which it was defined.
+        # body after the traversal is over. The body is processed in the state
+        # of the namespace in which it was defined.
         for func_def_node, func_namespace in self._uncalled_funcs.items():
+            print("self._uncalled_funcs:")
+            print(func_def_node.name)
+            print()
             self._process_user_defined_func(
                 func_def_node=func_def_node,
                 namespace=func_namespace
             )
+            self._called_funcs.append(func_def_node)
 
             # QUESTION: What if self._return_node == func_def_node? In this
             # case, it should be processed in the parent Saplings object.
+
+    ## ... ##
+
+    def _run_child_saplings_instance(self, tree, namespace):
+        child_obj = Saplings(tree=tree, namespace=namespace)
+        for func_def_node in child_obj._called_funcs:
+            if func_def_node in self._uncalled_funcs: # QUESTION: Why is this necessary?
+                del self._uncalled_funcs[func_def_node]
+
+        return child_obj
 
     ## Processors ##
 
@@ -95,6 +124,9 @@ class Saplings(ast.NodeVisitor):
     def _process_user_defined_func(self, func_def_node, namespace, arg_vals=[]):
         """
         Processes the arguments and body of a user-defined function.
+
+        Note: If the function is recursive, the recursive calls are not
+        processed (otherwise this would throw Saplings into an infinite loop).
 
         Parameters
         ----------
@@ -152,14 +184,17 @@ class Saplings(ast.NodeVisitor):
 
             namespace[arg_name] = arg_node
 
-        # TODO: Handle recursive functions (currently causes an infinite loop)
         # TODO: Simply create ast.Assign objects for each default argument and
         # prepend them to func_def_node.body –– let the Saplings instance
         # below do the rest
 
-        func_saplings_obj = Saplings(
+        # This handles recursive functions
+        if func_def_node.name in namespace: # Only false for uncalled funcs
+            # TODO: Delete ALL aliases for func_def_node
+            del namespace[func_def_node.name]
+
+        func_saplings_obj = self._run_child_saplings_instance(
             ast.Module(body=func_def_node.body),
-            self.forest,
             namespace
         )
         return func_saplings_obj._return_node
@@ -358,6 +393,7 @@ class Saplings(ast.NodeVisitor):
             reference to the terminal node in the subtree
         """
 
+        # TODO: Add information about user-defined functions to the docstring
         # TODO: Handle user-defined function calls from CLASSES
 
         func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef) # TODO: Handle ast.Lambda
@@ -367,6 +403,7 @@ class Saplings(ast.NodeVisitor):
                 if func_def_node: # Evaluate the function call
                     if func_def_node in self._uncalled_funcs:
                         del self._uncalled_funcs[func_def_node]
+                        self._called_funcs.append(func_def_node)
 
                     return_node = self._process_user_defined_func(
                         func_def_node=func_def_node,
@@ -375,6 +412,21 @@ class Saplings(ast.NodeVisitor):
                     ) # TODO: Handle tuples
 
                     if isinstance(return_node, func_def_types):
+                        # TODO: Return nodes like these need to be processed in
+                        # the namespace in which they were defined. For example:
+                            # def foo():
+                            #     x = module.call()
+                            #
+                            #     def bar(y):
+                            #         return x + y
+                            #
+                            #     return bar
+                            #
+                            # b = foo()
+                            # b(10)
+                        # Your code won't capture module.call().__add__(), but
+                        # it should.
+
                         func_def_node = return_node
                     else:
                         func_def_node = None
@@ -502,13 +554,36 @@ class Saplings(ast.NodeVisitor):
         pass # TODO
 
     def visit_FunctionDef(self, node):
+        """
+        Handles user-defined functions. When a user-defined function is called,
+        it can return a module construct (i.e. a reference to a d-tree node).
+        But as Python is dynamically typed, we don't know the return type until
+        the function is called. Thus, we only traverse the function body and
+        process those nodes when it's called and we know the types of the
+        inputs. And if a user-defined function is never called, we process it at
+        the end of the AST traversal and in the namespace it was defined in.
+
+        The processing is done by self._process_user_defined_func. This function
+        just aliases the node (i.e. saves it to self._node_lookup_table) and
+        adds it to the self._uncalled_funcs table, along with the namespace it's
+        defined in.
+
+        Parameters
+        ----------
+        node : ast.FunctionDef
+            has the following attributes:
+                1. `name`: raw string of the function name
+                2. `args`: ast.arguments node
+                3. `body`: list of nodes inside the function
+                4. `decorator_list`: list of decorators to be applied
+                5. `returns`: return annotation (Python 3 only)
+                6. `type_comment`: string containing the PEP 484 type comment
+        """
+
         # TODO: Handle decorators
 
-        # QUESTION: Delete self._node_lookup_table[node.name] before saving copy
-        # of namespace?
-
-        self._node_lookup_table[node.name] = node
         self._uncalled_funcs[node] = self._node_lookup_table.copy()
+        self._node_lookup_table[node.name] = node
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
@@ -516,6 +591,11 @@ class Saplings(ast.NodeVisitor):
     # TODO
     # def visit_Lambda(self, node):
     #     pass
+
+    def visit_Return(self, node):
+        if node.value:
+            tokenized_node = utils.recursively_tokenize_node(node.value, [])
+            self._return_node = self._process_connected_tokens(tokenized_node)
 
     ## Control Flow ##
 
@@ -535,12 +615,10 @@ class Saplings(ast.NodeVisitor):
     def visit_If(self, node):
         self.generic_visit(node.test)
 
-        body_saplings_obj = Saplings(
-            tree=ast.Module(body=node.body),
-            forest=self.forest,
-            namespace=self._node_lookup_table.copy()
+        body_saplings_obj = self._run_child_saplings_instance(
+            ast.Module(body=node.body),
+            self._node_lookup_table.copy()
         )
-        self._uncalled_funcs = body_saplings_obj._uncalled_funcs
 
         # TODO: Process each branch independently (i.e. process assuming that
         # the first If evaluates, then assuming the first If doesn't evaluate
@@ -555,6 +633,7 @@ class Saplings(ast.NodeVisitor):
             # self.visit_If(else_node)
             self.generic_visit(else_node)
 
+        # TODO: Wrap this up in self._run_child_saplings_instance
         for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
             del self._node_lookup_table[alias]
 
@@ -567,10 +646,9 @@ class Saplings(ast.NodeVisitor):
         # We can't know if `z = foo()` is ever evaluated.
 
     def visit_Try(self, node):
-        body_saplings_obj = Saplings(
-            tree=ast.Module(body=node.body),
-            forest=self.forest,
-            namespace=self._node_lookup_table.copy()
+        body_saplings_obj = self._run_child_saplings_instance(
+            ast.Module(body=node.body),
+            self._node_lookup_table.copy()
         )
 
         for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
@@ -602,10 +680,9 @@ class Saplings(ast.NodeVisitor):
                 else:
                     namespace[alias_str] = exception_node
 
-        body_saplings_obj = Saplings(
-            tree=ast.Module(body=node.body),
-            forest=self.forest,
-            namespace=namespace
+        body_saplings_obj = self._run_child_saplings_instance(
+            ast.Module(body=node.body),
+            namespace
         )
         for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
             del self._node_lookup_table[alias]
@@ -613,18 +690,16 @@ class Saplings(ast.NodeVisitor):
     def visit_While(self, node):
         self.generic_visit(node.test)
 
-        body_saplings_obj = Saplings(
-            tree=ast.Module(body=node.body),
-            forest=self.forest,
-            namespace=self._node_lookup_table.copy()
+        body_saplings_obj = self._run_child_saplings_instance(
+            ast.Module(body=node.body),
+            self._node_lookup_table.copy()
         )
 
         # Only executed when the while condition becomes False. If you break out
         # of the loop or if an exeception is raised, it won't be executed.
-        else_saplings_obj = Saplings(
-            tree=node.orelse,
-            forest=self.forest,
-            namespace=self._node_lookup_table.copy()
+        else_saplings_obj = self._run_child_saplings_instance(
+            ast.Module(body=node.orelse),
+            self._node_lookup_table.copy()
         )
 
     # TODO: Handle for loops
@@ -694,10 +769,9 @@ class Saplings(ast.NodeVisitor):
             if not index:
                 iter_tree_node = self._process_connected_tokens(iter_tokens)
             else:
-                iter_tree_node = Saplings(
-                    tree=ast.Module(body=[]),
-                    forest=self.forest,
-                    namespace=namespace
+                iter_tree_node = self._run_child_saplings_instance(
+                    ast.Module(body=[]),
+                    namespace
                 )._process_connected_tokens(iter_tokens)
 
             # TODO: Handle when generator.target is ast.Tuple
@@ -709,10 +783,9 @@ class Saplings(ast.NodeVisitor):
 
             child_ifs.extend(generator.ifs)
 
-        Saplings(
-            tree=ast.Module(body=child_ifs + elts),
-            forest=self.forest,
-            namespace=namespace
+        self._run_child_saplings_instance(
+            ast.Module(body=child_ifs + elts),
+            namespace
         )
 
     def visit_ListComp(self, node):
@@ -729,13 +802,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Miscellaneous ##
 
-    def visit_Return(self, node):
-        tokenized_node = utils.recursively_tokenize_node(node.value, [])
-        self._return_node = self._process_connected_tokens(tokenized_node)
-
-    # TODO: Handel globals, nonlocals
-    # TODO: Handle visit_Lambda, visit_IfExp
-    # TODO: Handle generators (i.e. yields)
+    # TODO: Handle globals, nonlocals, lambdas, ifexps, generators (i.e. yields)
 
     ## Public Methods ##
 
