@@ -97,20 +97,20 @@ class Node(object):
 #####################
 
 
-class StrToken(object):
-    def __init__(self, str):
-        self.str = str
-
-    def __repr__(self):
-        return self.str
-
-
 class NameToken(object):
     def __init__(self, name):
         self.name = name
 
     def __repr__(self):
         return self.name
+
+
+class ArgToken(object):
+    def __init__(self, arg, arg_name=''):
+        self.arg, self.arg_name = arg, arg_name
+
+    def __iter__(self):
+        yield from self.arg
 
 
 class ArgsToken(object):
@@ -122,51 +122,6 @@ class ArgsToken(object):
 
     def __repr__(self):
         return "()"
-
-
-class ArgToken(object):
-    def __init__(self, arg, arg_name=''):
-        self.arg, self.arg_name = arg, arg_name
-
-    def __iter__(self):
-        yield from self.arg
-
-
-class IndexToken(object):
-    def __init__(self, slice):
-        self.slice = slice
-
-    def __repr__(self):
-        if len(self.slice) == 1 and isinstance(self.slice[0], StrToken):
-            return '[' + str(self.slice[0]) + ']'
-
-        return "[]"
-
-
-class DictToken(object):
-    def __init__(self, keys, vals):
-        self.keys, self.vals = keys, vals
-
-    def __repr__(self):
-        return "{}"
-
-
-class ArrayToken(object):
-    def __init__(self, elts):
-        self.elts = elts
-
-    def __repr__(self):
-        return "[]"
-
-
-class ComprehensionToken(object):
-    def __init__(self, iterables, targets, val, key=None):
-        self.iterables, self.targets = iterables, targets
-        self.key, self.val = key, val
-        # self.if = if
-
-    def __repr__(self):
-        return "[]"
 
 
 BIN_OPS_TO_FUNCS = {
@@ -212,19 +167,21 @@ def tokenize_slice(slice):
 # and have the reference handlers (visit_Name, visit_Call, etc.) do the
 # tokenization and return the node; return None if not tokenizable
 
-# In _recursively_process_tokens, should you call self.generic_visit on the
+# In _process_connected_tokens, should you call self.generic_visit on the
 # arg nodes?
 def recursively_tokenize_node(node, tokens):
     """
-    Takes a node representing a function call and recursively unpacks it into
-    its constituent tokens. A "function call" includes subscripts (e.g.
-    my_var[1:4] => my_var.__index__(1, 4)), binary operations (e.g. my_var + 10
-    => my_var.__add__(10)), comparisons (e.g. my_var > 10 =>
+    Takes a node representing an identifier or function call and recursively
+    unpacks it into its constituent tokens. A "function call" includes
+    subscripts (e.g. my_var[1:4] => my_var.__index__(1, 4)), binary operations
+    (e.g. my_var + 10 => my_var.__add__(10)), comparisons (e.g. my_var > 10 =>
     my_var.__gt__(10)), and ... .
 
     Each token in this list is a child of the previous token. The "base" token
     are NameTokens. These are object references.
     """
+
+    # TODO: Handle ast.Starred
 
     if isinstance(node, ast.Name):
         tokens.append(NameToken(node.id))
@@ -274,14 +231,14 @@ def recursively_tokenize_node(node, tokens):
 
         return recursively_tokenize_node(node.left, tokens)
     elif isinstance(node, ast.Compare):
-        operator = node.ops.pop(0)
-        comparator = node.comparators.pop(0)
+        operator = node.ops[0]
+        comparator = node.comparators[0]
 
-        if node.ops and node.comparators:
+        if node.ops[1:] and node.comparators[1:]:
             new_compare_node = ast.Compare(
                 left=comparator,
-                ops=node.ops,
-                comparators=node.comparators
+                ops=node.ops[1:],
+                comparators=node.comparators[1:]
             )
             op_args = ArgsToken([ArgToken(
                 arg=recursively_tokenize_node(new_compare_node, [])
@@ -295,14 +252,8 @@ def recursively_tokenize_node(node, tokens):
         tokens.extend([op_args, op_name])
 
         return recursively_tokenize_node(node.left, tokens)
-    elif isinstance(node, ast.Str): # TODO: Handle these elsewhere
-        tokens.append(StrToken("\"" + node.s + "\""))
-        return tokens[::-1]
-    elif isinstance(node, ast.Num): # TODO: Handle these elsewhere
-        tokens.append(StrToken(str(node.n)))
-        return tokens[::-1]
     else:
-        return [] # TODO: Return node
+        return [node]
 
 
 def stringify_tokenized_nodes(tokens):
@@ -321,40 +272,9 @@ def stringify_tokenized_nodes(tokens):
 ############
 
 
-# def context_handler(func):
-#     """
-#     Decorator.
-#     Wrapper method around generic_visit that updates the context stack
-#     before traversing a subtree, and pops from the stack when the traversal
-#     is finished.
-#     """
-#
-#     def wrapper(self, node):
-#         new_ctx = func.__name__.replace("visit_", '')
-#         adj_ctx = [new_ctx, node.name] if hasattr(node, "name") and node.name else [new_ctx]
-#         self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
-#
-#         func(self, node)
-#         self.generic_visit(node)
-#
-#         self._context_stack.pop()
-#
-#     return wrapper
-
-
-def reference_handler(func):
+def connected_construct_handler(func):
     def wrapper(self, node):
         tokens = recursively_tokenize_node(node, [])
-        self._recursively_process_tokens(tokens)
+        self._process_connected_tokens(tokens)
 
     return wrapper
-
-
-# def visit_body_nodes(self, nodes):
-#     for node in nodes:
-#         try:
-#             node_name = type(node).__name__
-#             custom_visitor = getattr(self, ''.join(["visit_", node_name]))
-#             custom_visitor(node)
-#         except AttributeError:
-#             self.generic_visit(node)
