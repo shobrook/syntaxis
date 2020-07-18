@@ -6,27 +6,10 @@ from copy import copy
 # Local
 import utilities as utils
 
-# `process` means ...
-
-# TODO: Pass in self._uncalled_funcs into each child Saplings instance (OR,
-# do a diff)
-
-# TODO: Test what happens if you define a function, then define another function with
-# the same name. Also test what happens if you do or don't call either of them.
-
-# How does self._uncalled_funcs handle this?
-# def foo():
-#     def bar():
-#         return
-#
-#     return
-#
-# bar()
-
-# TODO: self._uncalled_funcs shouldn't be called in some child Saplings instances
+# BUG: x["sub1"] and x["sub2"] are treated as the same aliases
 
 class Saplings(ast.NodeVisitor):
-    def __init__(self, tree, forest=[], namespace={}):
+    def __init__(self, tree, forest=[], namespace={}, process_uncalled_funcs=True):
         """
         Extracts dependency trees from imported modules in a program.
 
@@ -46,8 +29,7 @@ class Saplings(ast.NodeVisitor):
         # Maps active aliases to dependency tree nodes (and ast.FunctionDef
         # nodes)
         self._node_lookup_table = namespace
-
-        self._uncalled_funcs, self._called_funcs = {}, []
+        self._uncalled_funcs, self._called_funcs = {}, set()
         self._return_node = None
 
         self.forest = forest # Holds root nodes of dependency trees
@@ -56,27 +38,32 @@ class Saplings(ast.NodeVisitor):
         # If a function is defined but never called, we process the function
         # body after the traversal is over. The body is processed in the state
         # of the namespace in which it was defined.
-        for func_def_node, func_namespace in self._uncalled_funcs.items():
-            print("self._uncalled_funcs:")
-            print(func_def_node.name)
-            print()
-            self._process_user_defined_func(
-                func_def_node=func_def_node,
-                namespace=func_namespace
-            )
-            self._called_funcs.append(func_def_node)
+        if process_uncalled_funcs:
+            uncalled_func_nodes = list(self._uncalled_funcs.keys())
+            for func_def_node in uncalled_func_nodes:
+                # Skip b/c this may be called in some other context (either the
+                # parent or another child of the parent)
+                if func_def_node == self._return_node:
+                    continue
 
-            # QUESTION: What if self._return_node == func_def_node? In this
-            # case, it should be processed in the parent Saplings object.
+                print("self._uncalled_funcs:")
+                print(func_def_node.name)
+                print()
+
+                self._process_user_defined_func(
+                    func_def_node=func_def_node,
+                    namespace=self._uncalled_funcs[func_def_node]
+                )
 
     ## ... ##
 
     def _run_child_saplings_instance(self, tree, namespace):
+        print("\tEntering child Saplings instance\n")
         child_obj = Saplings(tree=tree, namespace=namespace)
         for func_def_node in child_obj._called_funcs:
-            if func_def_node in self._uncalled_funcs: # QUESTION: Why is this necessary?
+            if func_def_node in self._uncalled_funcs:
                 del self._uncalled_funcs[func_def_node]
-
+        print("\tPopping out of Saplings instance\n")
         return child_obj
 
     ## Processors ##
@@ -108,7 +95,7 @@ class Saplings(ast.NodeVisitor):
             arg_name_index = index + (num_args - num_defaults)
             arg_name = arg_names[arg_name_index]
 
-            # BUG: Default values should be processed in a separate Saplings
+            # TODO: Default values should be processed in a separate Saplings
             # instance with the same namespace as the one the function was
             # defined in
             tokenized_default = utils.recursively_tokenize_node(default, [])
@@ -144,6 +131,9 @@ class Saplings(ast.NodeVisitor):
             d-tree node corresponding to the return value of the function
         """
 
+        # TODO: Handle single-star args (can't be done until data structure
+        # assignments can be handled)
+
         func_params = func_def_node.args
 
         arg_names = [arg.arg for arg in func_params.args]
@@ -168,10 +158,7 @@ class Saplings(ast.NodeVisitor):
         # Update namespace with default values
         func_namespace = {**namespace, **default_nodes, **kw_default_nodes}
 
-        # TODO: Handle single-star args
         for index, arg_token in enumerate(arg_vals):
-            # QUESTION: What if arg_token.arg isn't tokenized (e.g. if it's a
-            # lambda or ternary expression)?
             arg_node = self._process_connected_tokens(arg_token.arg)
 
             if not arg_node:
@@ -186,13 +173,19 @@ class Saplings(ast.NodeVisitor):
 
         # TODO: Simply create ast.Assign objects for each default argument and
         # prepend them to func_def_node.body –– let the Saplings instance
-        # below do the rest
+        # below do the rest.
 
-        # This handles recursive functions
-        if func_def_node.name in namespace: # Only false for uncalled funcs
-            # TODO: Delete ALL aliases for func_def_node
-            del namespace[func_def_node.name]
+        # This handles recursive functions by deleting all aliases to the
+        # function node
+        func_def_aliases = []
+        for alias, node in namespace.items():
+            if node == func_def_node:
+                func_def_aliases.append(alias)
 
+        for alias in func_def_aliases:
+            del namespace[alias]
+
+        self._called_funcs.add(func_def_node)
         func_saplings_obj = self._run_child_saplings_instance(
             ast.Module(body=func_def_node.body),
             namespace
@@ -235,7 +228,6 @@ class Saplings(ast.NodeVisitor):
             matching_module = find_matching_node(root, root_module)
 
             if matching_module:
-                # QUESTION: Do you need to add this to the alias lookup table?
                 term_node = matching_module
                 break
 
@@ -403,7 +395,10 @@ class Saplings(ast.NodeVisitor):
                 if func_def_node: # Evaluate the function call
                     if func_def_node in self._uncalled_funcs:
                         del self._uncalled_funcs[func_def_node]
-                        self._called_funcs.append(func_def_node)
+
+                    print("self._process_connected_tokens:")
+                    print(func_def_node.name)
+                    print()
 
                     return_node = self._process_user_defined_func(
                         func_def_node=func_def_node,
@@ -443,7 +438,7 @@ class Saplings(ast.NodeVisitor):
                         )
             elif not isinstance(token, utils.NameToken): # token is ast.AST node
                 self.generic_visit(token)
-                continue # QUESTION: Should I do anything with the result of self.generic_visit()?
+                continue
 
             if func_def_node:
                 func_def_node = None
@@ -476,7 +471,6 @@ class Saplings(ast.NodeVisitor):
 
     def visit_Import(self, node):
         for module in node.names:
-            # QUESTION: Should we ignore relative imports?
             if module.name.startswith('.'): # Ignores relative imports
                 continue
 
@@ -518,6 +512,8 @@ class Saplings(ast.NodeVisitor):
                 module_node.add_child(new_child)
 
     def visit_Assign(self, node):
+        # TODO: I think tuple assignment is broken. Fix it!
+
         values = node.value
         targets = node.targets if hasattr(node, "targets") else (node.target)
         for target in targets:
@@ -596,6 +592,13 @@ class Saplings(ast.NodeVisitor):
         if node.value:
             tokenized_node = utils.recursively_tokenize_node(node.value, [])
             self._return_node = self._process_connected_tokens(tokenized_node)
+
+        # TODO: Handle the following:
+            # def foo():
+            #     if x:
+            #         return y
+            #     else:
+            #         return z
 
     ## Control Flow ##
 
@@ -802,7 +805,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Miscellaneous ##
 
-    # TODO: Handle globals, nonlocals, lambdas, ifexps, generators (i.e. yields)
+    # TODO: Handle globals, nonlocals, lambdas, ifexps
 
     ## Public Methods ##
 
