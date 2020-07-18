@@ -181,6 +181,8 @@ def recursively_tokenize_node(node, tokens):
     are NameTokens. These are object references.
     """
 
+    # TODO: Handle ast.Starred
+
     if isinstance(node, ast.Name):
         tokens.append(NameToken(node.id))
         return tokens[::-1]
@@ -229,14 +231,14 @@ def recursively_tokenize_node(node, tokens):
 
         return recursively_tokenize_node(node.left, tokens)
     elif isinstance(node, ast.Compare):
-        operator = node.ops.pop(0)
-        comparator = node.comparators.pop(0)
+        operator = node.ops[0]
+        comparator = node.comparators[0]
 
-        if node.ops and node.comparators:
+        if node.ops[1:] and node.comparators[1:]:
             new_compare_node = ast.Compare(
                 left=comparator,
-                ops=node.ops,
-                comparators=node.comparators
+                ops=node.ops[1:],
+                comparators=node.comparators[1:]
             )
             op_args = ArgsToken([ArgToken(
                 arg=recursively_tokenize_node(new_compare_node, [])
@@ -270,40 +272,9 @@ def stringify_tokenized_nodes(tokens):
 ############
 
 
-# def context_handler(func):
-#     """
-#     Decorator.
-#     Wrapper method around generic_visit that updates the context stack
-#     before traversing a subtree, and pops from the stack when the traversal
-#     is finished.
-#     """
-#
-#     def wrapper(self, node):
-#         new_ctx = func.__name__.replace("visit_", '')
-#         adj_ctx = [new_ctx, node.name] if hasattr(node, "name") and node.name else [new_ctx]
-#         self._context_stack.append('#'.join(adj_ctx) + str(node.lineno))
-#
-#         func(self, node)
-#         self.generic_visit(node)
-#
-#         self._context_stack.pop()
-#
-#     return wrapper
-
-
 def connected_construct_handler(func):
     def wrapper(self, node):
         tokens = recursively_tokenize_node(node, [])
         self._process_connected_tokens(tokens)
 
     return wrapper
-
-
-# def visit_body_nodes(self, nodes):
-#     for node in nodes:
-#         try:
-#             node_name = type(node).__name__
-#             custom_visitor = getattr(self, ''.join(["visit_", node_name]))
-#             custom_visitor(node)
-#         except AttributeError:
-#             self.generic_visit(node)
