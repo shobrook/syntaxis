@@ -8,6 +8,9 @@ import utilities as utils
 
 # BUG: x["sub1"] and x["sub2"] are treated as the same aliases
 
+# TODO: When an uncalled function is evaluated, its namespace needs to be
+# adjusted for the function's parameter names (remove them from namespace).
+
 class Saplings(ast.NodeVisitor):
     def __init__(self, tree, forest=[], namespace={}, process_uncalled_funcs=True):
         """
