@@ -3,39 +3,37 @@
   <br />
 </h1>
 
-`saplings` is a library for pulling data out of [Abstract Syntax Trees (ASTs)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) in Python. Its hallmark feature is an algorithm that maps out the API of an imported module based on its usage in a program. An API is represented as a dependency tree, shown below:
+`saplings` is a static analysis tool for Python. It can map out the API of an imported module based only on its usage in a program. The API is represented as a dependency tree, where each node is a construct in the module.
 
 <h1 align="center" display="flex" justify-content="center">
   <img height="315px" src="./code_demo.png" />
   <img height="315px" src="./final_saplings_output.gif" />
 </h1>
 
-This library also provides easy functions for calculating software metrics, including:
-- Cyclomatic Complexity
-- Halstead Metrics
-- Maintainability Index
-- Function Rankings (COMING SOON)
-- Afferent and Efferent Couplings (COMING SOON)
-<!--- Detection of Partial, Recursive, or Curried functions-->
+<!-- This library also provides simple methods for calculating software metrics, including:
+
+- Halstead Metrics (Volume, Difficulty, Estimated Length, etc.)
+- Afferent and Efferent Couplings
+- Abstractness
+- Instability
+- Function Rankings
+- # of Partial, Recursive, and Curried Functions
+- # of Lines of Code
+- Cyclomatic Complexity (COMING SOON)
+- Maintainability Index (COMING SOON) -->
 
 ## Installation
 
 > Requires Python 3.0 or higher.
 
-You can also install `saplings` with pip:
+You can download a compiled binary [here](https://github.com/shobrook/saplings/releases) or install `saplings` with pip:
 
 `$ pip install saplings`
 
 ## Quick Start
 
-Import the `Saplings` object and initialize it with the path of a Python file (or the root node of its AST). Think of `Saplings` as a wrapper for a program's AST that exposes methods for extracting data from that tree.
+Import the `Saplings` object and initialize it with the root node of an AST (you'll need the `ast` module for this).
 
-```python
-from saplings import Saplings
-
-my_saplings = Saplings("path_to_your_program.py")
-```
-_or_
 ```python
 import ast
 from saplings import Saplings
@@ -45,91 +43,125 @@ program_ast = ast.parse(my_program)
 my_saplings = Saplings(program_ast)
 ```
 
-This object makes the following methods public:
+Initializing `Saplings` does ...
 
-### `Saplings.api_transducer()`
+Here's how to print out the d-trees, save them as JSON, etc. ...
 
+## Guide
 
+### Functions
 
-### `Saplings.get_freq_map()`
+Recursive and curried functions are handled. Closures too.
 
+## Limitations
 
-## API
+### Control Flow
 
-To get started, import the `Saplings` object from `saplings` and initialize it with the path of a Python file (or the root node of its AST). Think of `Saplings` as a wrapper for a program's Abstract Syntax Tree, much like `BeautifulSoup` wraps a website's DOM tree and exposes methods for doing things to that tree.
-
-**Initializing with a File Path**
-
-```python
-from saplings import Saplings
-
-my_saplings = Saplings("path/to/your_program.py")
-```
-
-**Initializing with an AST Root**
+Handling control flow is tricky. Tracking the usage of a module in `if`, `try`/`except`, `for`, `while`, and `with` blocks requires making assumptions about what code will run. For example, consider the following program:
 
 ```python
-import ast
-from saplings import Saplings
+import module
 
-my_program = open("path/to/your_program.py", 'r').read()
-program_ast = ast.parse(my_program)
-my_saplings = Saplings(program_ast)
+for item in module.items():
+  print(item.foo())
 ```
 
-The `Saplings` object exposes the following algorithms for analyzing your Python program:
+If `module.items()` is an empty list, then `item.foo()` will never be called. In that situation, adding the `__index__ -> () -> foo -> ()` subtree to `module -> items -> ()` would be an example of a false positive. To handle this, `Saplings` _should_ produce two possible trees for this module (see issue #X): `module -> items -> ()` and `module -> items -> () -> __index__ -> () -> foo -> ()`. But as of right now,
+`Saplings` will only produce the latter tree –– that is, we assume the bodies of `for` loops are always executed. Here are some other assumptions that `Saplings` makes:
 
-#### `get_api_forest()`
+#### `If` and `IfExp`
 
-Saplings is a type of Finite State Transducer (FST) called a Tree Transducer (TT), which takes a tree as input (a program’s AST) and outputs a forest. Each tree in the forest represents the subset of an imported package’s API that was used in the program.
-
-- Specifically, it’s a deterministic Top-Down Tree Transducer
-- TODO: Formally define this (incl. rules). Diagram it?
+Assignments made in the first `If` block in a series of `If`s, `Elif`s, and `Else`s are assumed to be the only assignments that persist. For example, consider this code and its corresponding d-tree:
 
 ```python
+import module
 
+var1 = module.foo()
+var2 = module.bar()
+
+if condition:
+  var1 = module.attr1 # Type I
+  var2 = None # Type II
+else:
+  var1 = None
+  var2 = module.attr2
+
+var1.fizzle()
+var2.shizzle()
 ```
 
-#### `find(nodes=[], skip=[]) -> List[ast.Node]`
+```
+module (1)
+ +-- foo
+ |   +-- () (1)
+ +-- bar
+ |   +-- () (1)
+ +-- attr1 (1)
+ |   +-- fizzle
+ |       +-- () (1)
+ +-- attr2 (1)
+```
 
-Returns a list of matching AST nodes. `nodes` is a list of node types to retrieve and the `skip` parameter is a list of subtrees to skip in the (depth-first) traversal. Both parameters are optional, and by default `find()` will return a list of all nodes contained in the AST.
+Notice that our assumption can produce false positives and negatives. If it turns out the `Else` block executes and not the `If`, then `attr1 -> fizzle -> ()` would be a false positive and the lack of inclusion of `attr2 -> shizzle -> ()` would be a false negative.
+
+This assumption applies to `IfExp`s too. For example, the assignment `var = module.foo() if condition else module.bar()` is equivalent to `var = module.foo()`.
+
+#### `While`
+
+`while` loops are processed under the same assumption as `for` loops –– that is, the body of the loop is assumed to execute.
+
+#### `Try`, `Except`, and `Finally`
+
+#### `Pass`
+
+#### `Continue`
 
 ```python
-# Retrieves all list, set, and dictionary comprehension nodes
-# from the AST, but skips nodes contained in functions
+import module
 
-comprehensions = my_saplings.find(
-     nodes=[ast.ListComp, ast.SetComp, ast.DictComp],
-     skip=[ast.FunctionDef]
-)
-print(comprehensions)
-# stdout: [<_ast.ListComp object at 0x102a8dd30>, <_ast.ListComp object at 0x102b1a128>, <_ast.DictComp object at 0x102c2b142>]
+for item in module.items():
+  continue
+  print(item.foo())
 ```
 
-#### `get_freq_map(nodes=[], built_ins=False, skip=[]) -> Dict[str, int]`
+We assume that the code underneath the continue statement does not execute. But what if the `continue` statement is inside an `if` block?
 
-Returns a dictionary mapping node types and/or built-in functions to their frequency of occurrence in the AST. `nodes` is a list of nodes to analyze, `built_ins` is a flag for whether built-in functions should be analyzed, and the `skip` parameter is a list of subtrees to skip in the traversal. All are optional, and by default `get_freq_map()` will return a dictionary mapping all node types in the tree to their frequencies.
+#### ``
+
+4. With
+5. Continue
+6. Break
+
+`Saplings` can't handle generators and assignments to data structures.
+
+#### `Saplings.analyze_module_usage(conservative=False, namespace={})`
+
+This method uses some basic type inference to track the usage of an imported module. It then maps out all the used attributes of the module (functions, instances, types) as a dependency tree and assigns a frequency value to each node. In theory, if your program used every construct in a module, then this tree would represent its entire API. The tree is returned as a dictionary with the following structure:
+
+<!--Give example of dictionary structure side-by-side with tree visualization-->
+
+**Arguments**
+
+- `conservative: Bool`: Because Python is a dynamic language, multiple module trees may be extracted for a single module, each corresponding to a possible execution path through the program. If set to `True`, GAT will only return a tree derived from code that is _sure_ to execute. If `False`, then multiple trees might be returned for each module. <!--Give example-->
+  - Maximum # of dep. trees = Cyclomatic Complexity
+- `namespace: Dict`: Lets you factor in the attributes of imported local modules.
+
+**Limitations**
+
+Notably, `analyze_module_usage` is not a type inference algorithm. For example, consider the following program:
 
 ```python
-# Counts the number of 'while' and 'for' loops present in the AST
+import torch
 
-loop_freqs = my_saplings.get_freq_map(nodes=[ast.While, ast.For])
-print(loop_freqs)
-# stdout: {ast.While: 19, ast.For: 12}
+my_tensor = torch.tensor([1,2,3])
+my_ndarray = my_tensor.numpy()
+print(my_ndarray.dtype)
 ```
 
-#### `get_cyclomatic_complexity(method_level=False)`
+<!--Give visualization of tree-->
 
-#### `get_halstead_metrics(method_level=False)`
+`analyze_module_usage` will _not_ tell you that calling `.numpy()` on a `tensor` returns an object of type `numpy.ndarray`. It will, however, tell you that `.numpy()` returns an object with a `dtype` attribute. <!--This is similar in principle to duck typing, where the attributes of an object are what define its type.-->
 
-#### `get_maintainability_index(method_level=False)`
+Another limitation is the lack of any formal proof that `analyze_module_usage` works correctly for every possible usage of a module. While it is able to follow complex paths through a program, I haven't tested every edge case, and there are already some known failure modes:
 
-## Planting a Sapling
-
-If you've written an AST-related algorithm that isn't in this library, feel free to make a contribution! Just fork the repo, make your changes, and then submit a pull request. If you do contribute, please follow the guidelines in the [contributing guide.](https://github.com/shobrook/saplings/blob/master/CONTRIBUTING.md)
-
-If you've discovered a bug or have a feature request, just create an [issue](https://github.com/shobrook/saplings/issues/new) and I'll take care of it!
-
-## Acknowledgments
-
-The author thanks [@rubik](https://github.com/rubik/) – the Halstead and Complexity metrics were based entirely on the [radon](https://github.com/rubik/radon/) source code.
+<!--List ways in which it fails-->
