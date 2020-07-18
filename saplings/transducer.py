@@ -95,7 +95,7 @@ class Saplings(ast.NodeVisitor):
             arg_name_index = index + (num_args - num_defaults)
             arg_name = arg_names[arg_name_index]
 
-            # TODO: Default values should be processed in a separate Saplings
+            # TODO (V1): Default values should be processed in a separate Saplings
             # instance with the same namespace as the one the function was
             # defined in
             tokenized_default = utils.recursively_tokenize_node(default, [])
@@ -131,7 +131,7 @@ class Saplings(ast.NodeVisitor):
             d-tree node corresponding to the return value of the function
         """
 
-        # TODO: Handle single-star args (can't be done until data structure
+        # TODO (V2): Handle single-star args (can't be done until data structure
         # assignments can be handled)
 
         func_params = func_def_node.args
@@ -171,7 +171,7 @@ class Saplings(ast.NodeVisitor):
 
             namespace[arg_name] = arg_node
 
-        # TODO: Simply create ast.Assign objects for each default argument and
+        # TODO (V1): Simply create ast.Assign objects for each default argument and
         # prepend them to func_def_node.body –– let the Saplings instance
         # below do the rest.
 
@@ -305,7 +305,7 @@ class Saplings(ast.NodeVisitor):
         tokenized_value = utils.recursively_tokenize_node(value, tokens=[])
         val_node = self._process_connected_tokens(tokenized_value)
 
-        # TODO: Handle assignments to data structures. For an assignment like
+        # TODO (V2): Handle assignments to data structures. For an assignment like
         # foo = [bar(i) for i in range(10)], foo.__index__() should be an alias
         # for bar().
 
@@ -363,7 +363,7 @@ class Saplings(ast.NodeVisitor):
         ```
 
         (Note that the `ast.Num` and `ast.Lambda` nodes are not connected to the
-        other tokens, and are represented as  AST nodes. These nodes are
+        other tokens, and are represented as AST nodes. These nodes are
         processed by `self.generic_visit`.)
 
         When these tokens are passed into `_process_connected_tokens`, the
@@ -385,10 +385,9 @@ class Saplings(ast.NodeVisitor):
             reference to the terminal node in the subtree
         """
 
-        # TODO: Add information about user-defined functions to the docstring
-        # TODO: Handle user-defined function calls from CLASSES
+        # TODO (V1): Handle user-defined function calls from CLASSES
 
-        func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef) # TODO: Handle ast.Lambda
+        func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef) # TODO (V1): Handle ast.Lambda
         node_stack, func_def_node = [], None
         for index, token in enumerate(tokens):
             if isinstance(token, utils.ArgsToken):
@@ -396,18 +395,14 @@ class Saplings(ast.NodeVisitor):
                     if func_def_node in self._uncalled_funcs:
                         del self._uncalled_funcs[func_def_node]
 
-                    print("self._process_connected_tokens:")
-                    print(func_def_node.name)
-                    print()
-
                     return_node = self._process_user_defined_func(
                         func_def_node=func_def_node,
                         namespace=self._node_lookup_table.copy(),
                         arg_vals=token.args
-                    ) # TODO: Handle tuples
+                    ) # TODO (V1): Handle tuples
 
                     if isinstance(return_node, func_def_types):
-                        # TODO: Return nodes like these need to be processed in
+                        # TODO (V1): Return nodes like these need to be processed in
                         # the namespace in which they were defined. For example:
                             # def foo():
                             #     x = module.call()
@@ -462,7 +457,7 @@ class Saplings(ast.NodeVisitor):
 
         if func_def_node:
             return func_def_node
-        if not node_stack:
+        elif not node_stack:
             return None
 
         return node_stack[-1]
@@ -512,7 +507,7 @@ class Saplings(ast.NodeVisitor):
                 module_node.add_child(new_child)
 
     def visit_Assign(self, node):
-        # TODO: I think tuple assignment is broken. Fix it!
+        # TODO (V1): I think tuple assignment is broken. Fix it!
 
         values = node.value
         targets = node.targets if hasattr(node, "targets") else (node.target)
@@ -547,7 +542,7 @@ class Saplings(ast.NodeVisitor):
     ## Function and Class Definition Handlers ##
 
     def visit_ClassDef(self, node):
-        pass # TODO
+        pass # TODO (V1)
 
     def visit_FunctionDef(self, node):
         """
@@ -567,16 +562,15 @@ class Saplings(ast.NodeVisitor):
         Parameters
         ----------
         node : ast.FunctionDef
-            has the following attributes:
-                1. `name`: raw string of the function name
-                2. `args`: ast.arguments node
-                3. `body`: list of nodes inside the function
-                4. `decorator_list`: list of decorators to be applied
-                5. `returns`: return annotation (Python 3 only)
-                6. `type_comment`: string containing the PEP 484 type comment
+            name : raw string of the function name
+            args : ast.arguments node
+            body : list of nodes inside the function
+            decorator_list : list of decorators to be applied
+            returns : return annotation (Python 3 only)
+            type_comment : string containing the PEP 484 type comment
         """
 
-        # TODO: Handle decorators
+        # TODO (V2): Handle decorators
 
         self._uncalled_funcs[node] = self._node_lookup_table.copy()
         self._node_lookup_table[node.name] = node
@@ -584,7 +578,7 @@ class Saplings(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
-    # TODO
+    # TODO (V1)
     # def visit_Lambda(self, node):
     #     pass
 
@@ -593,7 +587,7 @@ class Saplings(ast.NodeVisitor):
             tokenized_node = utils.recursively_tokenize_node(node.value, [])
             self._return_node = self._process_connected_tokens(tokenized_node)
 
-        # TODO: Handle the following:
+        # TODO (V1): Handle the following:
             # def foo():
             #     if x:
             #         return y
@@ -602,6 +596,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Control Flow ##
 
+    # TODO: Delete this
     def _diff_namespaces(self, namespace):
         aliases_to_ignore = []
         for alias, node in self._node_lookup_table.items():
@@ -618,35 +613,58 @@ class Saplings(ast.NodeVisitor):
     def visit_If(self, node):
         self.generic_visit(node.test)
 
+        for else_node in node.orelse:
+            self._run_child_saplings_instance(
+                tree=else_node,
+                namespace=self._node_lookup_table.copy()
+            )
+
+        self.generic_visit(ast.Module(body=node.body))
+
+    def visit_For(self, node):
+        """
+        Parameters
+        ----------
+        node : ast.For
+            target : node holding variable(s) the loop assigns to
+            iter : node holding item to be looped over
+            body : list of nodes to execute
+            orelse : list of nodes to execute (only executed if the loop
+                     finishes normally, rather than via a break statement)
+            type_comment : string containing the PEP 484 comment
+        """
+
+        # We treat the target as a subscript of iter
+        target_assignment = ast.Assign(
+            target=node.target,
+            value=ast.Subscript(
+                value=node.iter,
+                slice=ast.Index(value=ast.NameConstant(None)),
+                ctx=ast.Load()
+            )
+        )
+        self.generic_visit(ast.Module(body=[target_assignment] + node.body))
+
+        # TODO: Only run this if there's no `break` statement in the body
+        self.generic_visit(ast.Module(body=node.orelse))
+
+    def visit_AsyncFor(self, node):
+        self.visit_For(node)
+
+    def visit_While(self, node):
+        # TODO
+
         body_saplings_obj = self._run_child_saplings_instance(
             ast.Module(body=node.body),
             self._node_lookup_table.copy()
         )
 
-        # TODO: Process each branch independently (i.e. process assuming that
-        # the first If evaluates, then assuming the first If doesn't evaluate
-        # but the first elif does, and so on).
-
-        # QUESTION: For now, maybe just process the absolute minimum? So: if
-        # a K2 = K1 or K = U assignment is made in the body, then remove it from
-        # the parent context. If a U = K assignment is made, don't let it apply
-        # to the parent context. This can be hwat happens when conservative=True
-
-        for else_node in node.orelse:
-            # self.visit_If(else_node)
-            self.generic_visit(else_node)
-
-        # TODO: Wrap this up in self._run_child_saplings_instance
-        for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
-            del self._node_lookup_table[alias]
-
-        # QUESTION: What about:
-            # import foo
-            # for x in y:
-            #    if True:
-            #        continue
-            #    z = foo()
-        # We can't know if `z = foo()` is ever evaluated.
+        # Only executed when the while condition becomes False. If you break out
+        # of the loop or if an exeception is raised, it won't be executed.
+        else_saplings_obj = self._run_child_saplings_instance(
+            ast.Module(body=node.orelse),
+            self._node_lookup_table.copy()
+        )
 
     def visit_Try(self, node):
         body_saplings_obj = self._run_child_saplings_instance(
@@ -690,28 +708,6 @@ class Saplings(ast.NodeVisitor):
         for alias in self._diff_namespaces(body_saplings_obj._node_lookup_table):
             del self._node_lookup_table[alias]
 
-    def visit_While(self, node):
-        self.generic_visit(node.test)
-
-        body_saplings_obj = self._run_child_saplings_instance(
-            ast.Module(body=node.body),
-            self._node_lookup_table.copy()
-        )
-
-        # Only executed when the while condition becomes False. If you break out
-        # of the loop or if an exeception is raised, it won't be executed.
-        else_saplings_obj = self._run_child_saplings_instance(
-            ast.Module(body=node.orelse),
-            self._node_lookup_table.copy()
-        )
-
-    # TODO: Handle for loops
-    # def visit_For(self, node):
-    #     pass
-    #
-    # def visit_AsyncFor(self, node):
-    #     self.visit_For(node)
-
     def visit_withitem(self, node):
         if isinstance(node.optional_vars, ast.Name):
             self._process_assignment(
@@ -719,9 +715,9 @@ class Saplings(ast.NodeVisitor):
                 value=node.context_expr
             )
         elif isinstance(node.optional_vars, ast.Tuple):
-            pass # TODO
+            pass # TODO (V1)
         elif isinstance(node.optional_vars, ast.List):
-            pass # TODO
+            pass # TODO (V1)
 
     ## Connected Construct Handlers ##
 
@@ -751,7 +747,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Data Structure Handlers ##
 
-    # TODO: Allow Type I assignments to dictionaries, lists, sets, and tuples.
+    # TODO (V2): Allow Type I assignments to dictionaries, lists, sets, and tuples.
     # Right now, assignments to data structures are treated as Type II. For
     # example, "attr" would not be captured in the following script:
     #   import module
@@ -777,7 +773,7 @@ class Saplings(ast.NodeVisitor):
                     namespace
                 )._process_connected_tokens(iter_tokens)
 
-            # TODO: Handle when generator.target is ast.Tuple
+            # TODO (V1): Handle when generator.target is ast.Tuple
             targ_tokens = utils.recursively_tokenize_node(generator.target, [])
             targ_str = utils.stringify_tokenized_nodes(targ_tokens)
 
@@ -805,7 +801,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Miscellaneous ##
 
-    # TODO: Handle globals, nonlocals, lambdas, ifexps
+    # TODO (V1): Handle globals, nonlocals, lambdas, ifexps
 
     ## Public Methods ##
 
