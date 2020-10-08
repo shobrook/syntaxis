@@ -3,12 +3,9 @@
   <br />
 </h1>
 
-`saplings` is a static analysis tool for Python. It can map out the API of an imported module based only on its usage in a program. The API is represented as a dependency tree, where each node is a construct in the module.
+`saplings` is a tool for analyzing the usage of imported modules in a Python program. It uses type inference to map out the constructs of a module as a dependency tree. If the input program used every object derived from a module, then this tree would represent its entire API.
 
-<h1 align="center" display="flex" justify-content="center">
-  <img height="315px" src="./code_demo.png" />
-  <img height="315px" src="./final_saplings_output.gif" />
-</h1>
+<img src="./demo.gif" />
 
 <!-- This library also provides simple methods for calculating software metrics, including:
 
@@ -24,13 +21,15 @@
 
 ## Installation
 
-> Requires Python 3.0 or higher.
+> Requires Python 3.X.
 
-You can download a compiled binary [here](https://github.com/shobrook/saplings/releases) or install `saplings` with pip:
+You can install `saplings` with `pip`:
 
-`$ pip install saplings`
+```bash
+$ pip install saplings
+```
 
-## Quick Start
+## Getting Started
 
 Import the `Saplings` object and initialize it with the root node of an AST (you'll need the `ast` module for this).
 
@@ -47,17 +46,26 @@ Initializing `Saplings` does ...
 
 Here's how to print out the d-trees, save them as JSON, etc. ...
 
-## Guide
-
-### Functions
-
-Recursive and curried functions are handled. Closures too.
+How to interpret the d-tree (e.g. how to interpret __index__, ())
 
 ## Limitations
 
+### Data Structures
+
+As of right now, saplings can't track assignments to generators, comprehensions, dictionaries, lists, tuples, or sets. For example, consider the following program:
+
+```python
+import module
+
+my_var = [module.foo(i) for i in range(10)]
+my_var[0].bar()
+```
+
+Here, `bar()` will not be captured and added to the d-tree for `module`. However, this isn't to say saplings doesn't capture module constructs used _inside_ data structures. In the example above, a node for `foo()` will still be created and appended to the d-tree.
+
 ### Control Flow
 
-Handling control flow is tricky. Tracking the usage of a module in `if`, `try`/`except`, `for`, `while`, and `with` blocks requires making assumptions about what code will run. For example, consider the following program:
+Handling control flow is tricky. Tracking the usage of a module in `if`, `try`/`except`, `for`, `while`, and `with` blocks requires making assumptions about what code actually executes. For example, consider the following program:
 
 ```python
 import module
@@ -66,12 +74,16 @@ for item in module.items():
   print(item.foo())
 ```
 
-If `module.items()` is an empty list, then `item.foo()` will never be called. In that situation, adding the `__index__ -> () -> foo -> ()` subtree to `module -> items -> ()` would be an example of a false positive. To handle this, `Saplings` _should_ produce two possible trees for this module (see issue #X): `module -> items -> ()` and `module -> items -> () -> __index__ -> () -> foo -> ()`. But as of right now,
-`Saplings` will only produce the latter tree –– that is, we assume the bodies of `for` loops are always executed. Here are some other assumptions that `Saplings` makes:
+If `module.items()` is an empty list, then `item.foo()` will never be called. In that situation, adding the `__index__ -> () -> foo -> ()` subtree to `module -> items -> ()` would be an example of a false positive. To handle this, Saplings _should_ branch out and produce two possible trees for this module (see issue #X): `module -> items -> ()` and `module -> items -> () -> __index__ -> () -> foo -> ()`. But as of right now,
+Saplings will only produce the latter tree –– that is, we assume the bodies of `for` loops are always executed. Here are some other assumptions that `Saplings` makes:
+
+#### `While`
+
+`while` loops are processed under the same assumption as `for` loops –– that is, the body of the loop is assumed to execute.
 
 #### `If` and `IfExp`
 
-Assignments made in the first `If` block in a series of `If`s, `Elif`s, and `Else`s are assumed to be the only assignments that persist. For example, consider this code and its corresponding d-tree:
+Assignments made in the first `If` block in a series of `If`s, `Elif`s, and `Else`s are assumed to be the only assignments that persist into the namespace. For example, consider this code and its  corresponding d-tree:
 
 ```python
 import module
@@ -102,15 +114,11 @@ module (1)
  +-- attr2 (1)
 ```
 
-Notice that our assumption can produce false positives and negatives. If it turns out the `Else` block executes and not the `If`, then `attr1 -> fizzle -> ()` would be a false positive and the lack of inclusion of `attr2 -> shizzle -> ()` would be a false negative.
+Notice that our assumption can produce false positives and negatives. If it turns out the `Else` block executes and not the `If`, then `attr1 -> fizzle -> ()` would be a false positive and the exclusion of `attr2 -> shizzle -> ()` would be a false negative.
 
-This assumption applies to `IfExp`s too. For example, the assignment `var = module.foo() if condition else module.bar()` is equivalent to `var = module.foo()`.
+This assumption applies to `IfExp`s too. For example, the assignment `var = module.foo() if condition else module.bar()` is, under our assumption, equivalent to `var = module.foo()`.
 
-#### `While`
-
-`while` loops are processed under the same assumption as `for` loops –– that is, the body of the loop is assumed to execute.
-
-#### `Try`, `Except`, and `Finally`
+`Try` and `Except` blocks are handled similarly to `If`/`Else` blocks. TODO: What about `Finally` blocks?
 
 #### `Pass`
 
@@ -136,6 +144,8 @@ We assume that the code underneath the continue statement does not execute. But 
 
 #### `Saplings.analyze_module_usage(conservative=False, namespace={})`
 
+Tracks the state of the namespace as we traverse through the AST of the program.
+
 This method uses some basic type inference to track the usage of an imported module. It then maps out all the used attributes of the module (functions, instances, types) as a dependency tree and assigns a frequency value to each node. In theory, if your program used every construct in a module, then this tree would represent its entire API. The tree is returned as a dictionary with the following structure:
 
 <!--Give example of dictionary structure side-by-side with tree visualization-->
@@ -143,7 +153,7 @@ This method uses some basic type inference to track the usage of an imported mod
 **Arguments**
 
 - `conservative: Bool`: Because Python is a dynamic language, multiple module trees may be extracted for a single module, each corresponding to a possible execution path through the program. If set to `True`, GAT will only return a tree derived from code that is _sure_ to execute. If `False`, then multiple trees might be returned for each module. <!--Give example-->
-  - Maximum # of dep. trees = Cyclomatic Complexity
+  - Maximum # of groups of dep. trees = Cyclomatic Complexity
 - `namespace: Dict`: Lets you factor in the attributes of imported local modules.
 
 **Limitations**
@@ -162,6 +172,8 @@ print(my_ndarray.dtype)
 
 `analyze_module_usage` will _not_ tell you that calling `.numpy()` on a `tensor` returns an object of type `numpy.ndarray`. It will, however, tell you that `.numpy()` returns an object with a `dtype` attribute. <!--This is similar in principle to duck typing, where the attributes of an object are what define its type.-->
 
-Another limitation is the lack of any formal proof that `analyze_module_usage` works correctly for every possible usage of a module. While it is able to follow complex paths through a program, I haven't tested every edge case, and there are already some known failure modes:
+Another limitation is the lack of any formal proof that `analyze_module_usage` works correctly for every possible usage of a module. While it is able to follow complex paths through a program, I haven't tested every edge case, and there are already some known failure modes, listed in the "Limitations" section.
 
-<!--List ways in which it fails-->
+#### TODO
+
+Overloaded operators (I am handling BinOps, but what about things like __len__?)
