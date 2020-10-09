@@ -3,11 +3,9 @@
   <br />
 </h1>
 
-`saplings` is a static analysis tool for Python. Given a Python program, `saplings` builds object hierarchies for imported modules based on their usage in the program.
+`saplings` is a static analysis tool for Python. Given a Python program, `saplings` builds object hierarchies for imported modules based on their usage in the program. If the input program used every construct in a module, then this tree would represent its entire API.<!--Too strong of a statement?-->
 
 <img src="./demo.gif" />
-
-If the input program used every construct in a module, then this tree would represent its entire API.<!--Too strong of a statement?-->
 
 <!-- This library also provides simple methods for calculating software metrics, including:
 
