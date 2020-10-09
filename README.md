@@ -3,7 +3,7 @@
   <br />
 </h1>
 
-`saplings` is a tool for analyzing the usage of imported modules in a Python program. It uses type inference to map out the constructs of a module as a dependency tree. If the input program used every object derived from a module, then this tree would represent its entire API.
+`saplings` is a static analysis tool for mapping out the usage of imported modules in a Python program. It tracks how module constructs are used in a program and represents those constructs as a dependency tree. If the input program used every object in a module, then this tree would represent its entire API.
 
 <img src="./demo.gif" />
 
@@ -47,12 +47,33 @@ Initializing `Saplings` does ...
 Here's how to print out the d-trees, save them as JSON, etc. ...
 
 How to interpret the d-tree (e.g. how to interpret __index__, ())
+- Function calls include subscripts (__index__), comparisons, and binary operations
 
 ## Limitations
 
+### Functions
+
+```python
+import module
+
+print(module.foo(5).attr)
+print(module.foo(10).attr.bar())
+```
+
+`module -> foo -> () -> attr -> bar -> ()`
+Even though `module.foo()` could output a different object (that happens to have an attribute named `attr`) when the input is `10`.
+
+#### Recursion
+
+#### Currying
+
+### Closures and Curried Functions
+
+### Generators
+
 ### Data Structures
 
-As of right now, saplings can't track assignments to generators, comprehensions, dictionaries, lists, tuples, or sets. For example, consider the following program:
+As of right now, saplings can't track assignments to generators, comprehensions, dictionaries, lists, tuples, or sets. For example, consider the following:
 
 ```python
 import module
@@ -61,7 +82,9 @@ my_var = [module.foo(i) for i in range(10)]
 my_var[0].bar()
 ```
 
-Here, `bar()` will not be captured and added to the d-tree for `module`. However, this isn't to say saplings doesn't capture module constructs used _inside_ data structures. In the example above, a node for `foo()` will still be created and appended to the d-tree.
+Here, `bar()` would not be captured and added to the d-tree for `module`. However, this isn't to say saplings doesn't capture module constructs used _inside_ data structures. In the example above, a node for `foo()` will still be created and appended to the d-tree.
+
+### Subscripts
 
 ### Control Flow
 
