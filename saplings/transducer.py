@@ -6,8 +6,6 @@ from copy import copy
 # Local
 import utilities as utils
 
-# TODO: When an uncalled function is evaluated, its namespace needs to be
-# adjusted for the function's parameter names (remove them from namespace).
 
 class Saplings(ast.NodeVisitor):
     def __init__(self, tree, forest=[], namespace={}):
@@ -30,9 +28,11 @@ class Saplings(ast.NodeVisitor):
         # Maps active aliases to dependency tree nodes (and ast.FunctionDef
         # nodes)
         self._node_lookup_table = namespace
-        # self._function_lookup_table = 
-        self._uncalled_funcs, self._called_funcs = {}, set()
+        # Maps FunctionDef nodes to the namespaces in which they were defined
+        # and a flag for whether they've been called or not
+        self._func_lookup_table = {}
 
+        # TODO: Explain this
         self._return_node = None
 
         self.forest = forest # Holds root nodes of dependency trees
@@ -41,21 +41,21 @@ class Saplings(ast.NodeVisitor):
         # If a function is defined but never called, we process the function
         # body after the traversal is over. The body is processed in the state
         # of the namespace in which it was defined.
-        uncalled_func_nodes = list(self._uncalled_funcs.keys())
-        for func_def_node in uncalled_func_nodes:
-            # Skip b/c this may be called in some other context (either the
-            # parent or another child of the parent)
-            # TODO: Examine this
+        # TODO: Just iterate through the keys
+        for func_def_node, data in self._func_lookup_table.items():
+            # Skip to handle currying, as this function may be called in the
+            # parent context
             if func_def_node == self._return_node:
                 continue
 
-            print("self._uncalled_funcs:")
-            print(func_def_node.name)
-            print()
+            if data["called"]:
+                continue
 
+            # TODO: When an uncalled function is evaluated, its namespace needs to be
+            # adjusted for the function's parameter names (remove them from namespace)
             self._process_user_defined_func(
                 func_def_node=func_def_node,
-                namespace=self._uncalled_funcs[func_def_node]
+                namespace=data["namespace"]
             )
 
     ## ... ##
@@ -72,10 +72,10 @@ class Saplings(ast.NodeVisitor):
         print("\tEntering child Saplings instance\n") # TEMP
         child_obj = Saplings(tree=tree, namespace=namespace)
 
-        for func_def_node in child_obj._called_funcs:
-            if func_def_node in self._uncalled_funcs:
-                del self._uncalled_funcs[func_def_node]
-                self._called_funcs.add(func_def_node)
+        for func_def_node, data in child_obj._func_lookup_table.items():
+            if func_def_node in self._func_lookup_table:
+                self._func_lookup_table[func_def_node]["called"] = data["called"]
+
         print("\tPopping out of Saplings instance\n") # TEMP
         return child_obj
 
@@ -149,6 +149,7 @@ class Saplings(ast.NodeVisitor):
         # TODO (V2): Handle single-star args (can't be done until data structure
         # assignments can be handled)
 
+        # print(arg_vals)
         func_params = func_def_node.args
 
         arg_names = [arg.arg for arg in func_params.args]
@@ -177,7 +178,6 @@ class Saplings(ast.NodeVisitor):
 
         for index, arg_token in enumerate(arg_vals):
             arg_node = self._process_connected_tokens(arg_token.arg)
-
             if not arg_node:
                 continue
 
@@ -194,29 +194,28 @@ class Saplings(ast.NodeVisitor):
 
         # This handles recursive functions by deleting all aliases to the
         # function node
-        func_def_aliases = []
-        for alias, node in namespace.items():
+        for alias, node in list(namespace.items()):
             if node == func_def_node:
-                func_def_aliases.append(alias)
+                del namespace[alias]
 
-        for alias in func_def_aliases:
-            del namespace[alias]
-
-        self._called_funcs.add(func_def_node)
+        # print(func_def_node.name)
+        # print(namespace)
         func_saplings_obj = self._run_child_saplings_instance(
             ast.Module(body=func_def_node.body),
             namespace
         )
-        return_node = func_saplings_obj._return_node
+        if func_def_node in self._func_lookup_table: # TODO: Handle negative case where func_def_node was defined in the parent context and therefore isn't in the lookup table
+            self._func_lookup_table[func_def_node]["called"] = True
 
+        # Handles currying by adding returned function to _func_lookup_table
+        return_node = func_saplings_obj._return_node
         if isinstance(return_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            self._
-        if func_saplings_obj._return_node:
-            print("yo")
-            print(func_saplings_obj._return_node)
-            # print(func_saplings_obj._node_lookup_table[func_saplings_obj._return_node])
-            print(func_saplings_obj._uncalled_funcs[func_saplings_obj._return_node])
-        return func_saplings_obj._return_node
+            self._func_lookup_table[return_node] = {
+                **func_saplings_obj._func_lookup_table[return_node],
+                **{"called": False, "curried_output": True}
+            }
+
+        return return_node
 
     def _process_module(self, module, standard_import=False):
         """
@@ -419,36 +418,31 @@ class Saplings(ast.NodeVisitor):
         for index, token in enumerate(tokens):
             if isinstance(token, utils.ArgsToken):
                 if func_def_node: # Evaluate the function call
-                    if func_def_node in self._uncalled_funcs:
-                        del self._uncalled_funcs[func_def_node]
+                    if func_def_node not in self._func_lookup_table:
+                        namespace = self._node_lookup_table.copy()
+                    else:
+                        func_state = self._func_lookup_table[func_def_node]
+                        is_curried_output = func_state["curried_output"]
+                        if is_curried_output:
+                            namespace = {
+                                **self._node_lookup_table.copy(),
+                                **func_state["namespace"]
+                            }
+                        else:
+                            namespace = self._node_lookup_table.copy()
 
                     return_node = self._process_user_defined_func(
                         func_def_node=func_def_node,
-                        namespace=self._node_lookup_table.copy(),
+                        namespace=namespace,
                         arg_vals=token.args
                     ) # TODO (V1): Handle tuples
 
                     if isinstance(return_node, func_def_types):
-                        # TODO (V1): Return nodes like these need to be processed in
-                        # the namespace in which they were defined. For example:
-                            # def foo():
-                            #     x = module.call()
-                            #
-                            #     def bar(y):
-                            #         return x + y
-                            #
-                            #     return bar
-                            #
-                            # b = foo()
-                            # b(10)
-                        # Your code won't capture module.call().__add__(), but
-                        # it should.
-
                         func_def_node = return_node
                     else:
                         func_def_node = None
 
-                    if return_node:
+                    if return_node: # QUESTION: What if return_node is func_def?
                         node_stack.append(return_node)
 
                     continue
@@ -581,10 +575,10 @@ class Saplings(ast.NodeVisitor):
         inputs. And if a user-defined function is never called, we process it at
         the end of the AST traversal and in the namespace it was defined in.
 
-        The processing is done by self._process_user_defined_func. This function
-        just aliases the node (i.e. saves it to self._node_lookup_table) and
-        adds it to the self._uncalled_funcs table, along with the namespace it's
-        defined in.
+        This processing is done by self._process_user_defined_func. All this
+        visitor does is alias the node (i.e. saves it to self._node_lookup_table)
+        and adds it to the self._func_lookup_table, along with a copy of the
+        namespace in the state the function is defined in.
 
         Parameters
         ----------
@@ -599,7 +593,11 @@ class Saplings(ast.NodeVisitor):
 
         # TODO (V2): Handle decorators
 
-        self._uncalled_funcs[node] = self._node_lookup_table.copy()
+        self._func_lookup_table[node] = {
+            "namespace": self._node_lookup_table.copy(),
+            "called": False,
+            "curried_output": False
+        }
         self._node_lookup_table[node.name] = node
 
     def visit_AsyncFunctionDef(self, node):
