@@ -204,7 +204,9 @@ class Saplings(ast.NodeVisitor):
             ast.Module(body=func_def_node.body),
             namespace
         )
-        if func_def_node in self._func_lookup_table: # TODO: Handle negative case where func_def_node was defined in the parent context and therefore isn't in the lookup table
+        # TODO (V1): Handle case where function was defined in the parent
+        # context and therefore isn't in the lookup table
+        if func_def_node in self._func_lookup_table:
             self._func_lookup_table[func_def_node]["called"] = True
 
         # Handles currying by adding returned function to _func_lookup_table
@@ -604,7 +606,22 @@ class Saplings(ast.NodeVisitor):
         self.visit_FunctionDef(node)
 
     def visit_Lambda(self, node):
-        # TODO (V1): Pop the arguments out of the namespace
+        namespace = self._node_lookup_table.copy()
+        args = node.args.args + node.args.kwonlyargs
+        if node.args.vararg:
+            args += [node.args.vararg]
+        if node.args.kwarg:
+            args += [node.args.kwarg]
+
+        # node.args.default
+        for arg in args:
+            arg_name = arg.arg
+            if arg_name not in namespace:
+                continue
+
+            del namespace[arg_name]
+
+        self._run_child_saplings_instance(node.body, namespace)
         return # TODO (V2)
 
     def visit_Return(self, node):
