@@ -7,52 +7,55 @@ from copy import copy
 import utilities as utils
 
 
+# QUESTION: Should frequency values be based on # of times evaluated, or # of
+# times a construct appears in the code?
+
 class Saplings(ast.NodeVisitor):
-    def __init__(self, tree, forest=[], namespace={}):
+    def __init__(self, tree, hierarchies=[], namespace={}):
         """
-        Extracts object hierarchies for imported modules in a program.
+        Extracts object hierarchies for imported modules in a program, given its
+        AST.
 
         Parameters
         ----------
         tree : ast.AST
-            the AST representation of the program to be analyzed, or a subtree
-        forest : {list, optional}
-            root nodes of existing module dependency trees
+            the AST representation of the program to be analyzed
+        hierarchies : {list, optional}
+            root nodes of existing object hierarchies
         namespace : {dict, optional}
-            node lookup table (mapping of aliases to d-tree and AST nodes)
-        uncalled_funcs : {dict, optional}
-            user-defined functions and the namespaces in which they were
-            defined
+            mapping of identifiers to object/FunctionDef/ClassDef nodes
         """
 
-        # Maps active aliases to dependency tree nodes (and ast.FunctionDef
-        # nodes)
-        self._node_lookup_table = namespace
-        # Maps FunctionDef nodes to the namespaces in which they were defined
-        # and a flag for whether they've been called or not
-        self._func_lookup_table = {}
+        # Maps identifiers to object hierarchy nodes, function definition nodes,
+        # and class definition nodes
+        self._namespace = namespace
 
-        # TODO: Explain this
+        # Maps ast.FuntionDef nodes to the namespaces in which they were defined
+        # and a flag for whether they've been evaluated in the current scope
+        self._func_state_lookup_table = {}
+
+        # Object hierarchy node (or FuncDef/ClassDef) corresponding to the first
+        # evaluated return statement in the AST
         self._return_node = None
 
-        self.forest = forest # Holds root nodes of dependency trees
-        self.visit(tree) # Begins traversal of the AST
+        # Holds root nodes of object hierarchy trees
+        self._hierarchies = hierarchies
+
+        # Traverses the AST
+        self.visit(tree)
 
         # If a function is defined but never called, we process the function
         # body after the traversal is over. The body is processed in the state
         # of the namespace in which it was defined.
-        # TODO: Just iterate through the keys
-        for func_def_node, data in self._func_lookup_table.items():
+        for func_def_node, data in self._func_state_lookup_table.items():
+            if data["called"]:
+                continue
+
             # Skip to handle currying, as this function may be called in the
             # parent context
             if func_def_node == self._return_node:
                 continue
 
-            if data["called"]:
-                continue
-
-            # TODO: When an uncalled function is evaluated, its namespace needs to be
-            # adjusted for the function's parameter names (remove them from namespace)
             self._process_user_defined_func(
                 func_def_node=func_def_node,
                 namespace=data["namespace"]
@@ -70,11 +73,15 @@ class Saplings(ast.NodeVisitor):
         """
 
         print("\tEntering child Saplings instance\n") # TEMP
-        child_obj = Saplings(tree=tree, namespace=namespace)
+        child_obj = Saplings(
+            tree=tree,
+            hierarchies=self._hierarchies,
+            namespace=namespace
+        )
 
-        for func_def_node, data in child_obj._func_lookup_table.items():
-            if func_def_node in self._func_lookup_table:
-                self._func_lookup_table[func_def_node]["called"] = data["called"]
+        for func_def_node, data in child_obj._func_state_lookup_table.items():
+            if func_def_node in self._func_state_lookup_table:
+                self._func_state_lookup_table[func_def_node]["called"] = data["called"]
 
         print("\tPopping out of Saplings instance\n") # TEMP
         return child_obj
@@ -98,11 +105,14 @@ class Saplings(ast.NodeVisitor):
         Returns
         -------
         dict
-            mapping of argument names to their default value's d-tree node
+            mapping of argument names to their default value's OH node
+        list
+            list of names of arguments whose defaults had no corresponding
+            OH node
         """
 
         num_args, num_defaults = len(arg_names), len(defaults)
-        arg_to_default_node = {}
+        arg_to_default_node, null_defaults = {}, []
         for index, default in enumerate(defaults):
             if not default: # Only kw_defaults can be None
                 continue
@@ -110,18 +120,18 @@ class Saplings(ast.NodeVisitor):
             arg_name_index = index + (num_args - num_defaults)
             arg_name = arg_names[arg_name_index]
 
-            child_saplings = self._run_child_saplings_instance(
-                tree=ast.Module(body=[ast.Return(default)]),
+            default_node = self._run_child_saplings_instance(
+                tree=ast.Module(body=[]),
                 namespace=namespace
-            )
-            default_node = child_saplings._return_node
+            )._process_connected_tokens(default)
 
             if not default_node:
+                null_defaults.append(arg_name)
                 continue
 
             arg_to_default_node[arg_name] = default_node
 
-        return arg_to_default_node
+        return arg_to_default_node, null_defaults
 
     def _process_user_defined_func(self, func_def_node, namespace, arg_vals=[]):
         """
@@ -146,21 +156,20 @@ class Saplings(ast.NodeVisitor):
             d-tree node corresponding to the return value of the function
         """
 
-        # TODO (V2): Handle single-star args (can't be done until data structure
-        # assignments can be handled)
+        # TODO (V2): Handle single-star args
 
-        # print(arg_vals)
         func_params = func_def_node.args
 
         arg_names = [arg.arg for arg in func_params.args]
         kwonlyarg_names = [arg.arg for arg in func_params.kwonlyargs]
 
-        default_nodes = self._process_arg_defaults(
+        # OH nodes corresponding to default values
+        default_nodes, null_defaults = self._process_arg_defaults(
             arg_names=arg_names,
             defaults=func_params.defaults,
             namespace=namespace
         )
-        kw_default_nodes = self._process_arg_defaults(
+        kw_default_nodes, null_kw_defaults = self._process_arg_defaults(
             arg_names=kwonlyarg_names,
             defaults=func_params.kw_defaults,
             namespace=namespace
@@ -175,46 +184,51 @@ class Saplings(ast.NodeVisitor):
 
         # Update namespace with default values
         func_namespace = {**namespace, **default_nodes, **kw_default_nodes}
+        for null_arg_name in null_defaults + null_kw_defaults:
+            if null_arg_name in func_namespace:
+                del func_namespace[null_arg_name]
 
+        # Iterates through arguments in order they were passed into function
         for index, arg_token in enumerate(arg_vals):
-            arg_node = self._process_connected_tokens(arg_token.arg)
-            if not arg_node:
-                continue
-
             if not arg_token.arg_name:
                 arg_name = arg_names[index]
             else:
                 arg_name = arg_token.arg_name
 
-            namespace[arg_name] = arg_node
+            arg_node = self._process_connected_tokens(arg_token.arg)
+            if not arg_node:
+                if arg_name in func_namespace:
+                    del func_namespace[arg_name]
 
-        # TODO: Simply create ast.Assign objects for each default argument and
+                continue
+
+            func_namespace[arg_name] = arg_node
+
+        # TODO (V2): Simply create ast.Assign objects for each default argument and
         # prepend them to func_def_node.body –– let the Saplings instance
         # below do the rest. Not necessary but it would clean up your code.
 
-        # This handles recursive functions by deleting all aliases to the
-        # function node
-        for alias, node in list(namespace.items()):
+        # Handles recursive functions by deleting all names of the function node
+        for alias, node in list(func_namespace.items()):
             if node == func_def_node:
-                del namespace[alias]
+                del func_namespace[alias]
 
-        # print(func_def_node.name)
-        # print(namespace)
         func_saplings_obj = self._run_child_saplings_instance(
             ast.Module(body=func_def_node.body),
-            namespace
+            func_namespace
         )
         # TODO (V1): Handle case where function was defined in the parent
         # context and therefore isn't in the lookup table
-        if func_def_node in self._func_lookup_table:
-            self._func_lookup_table[func_def_node]["called"] = True
+        if func_def_node in self._func_state_lookup_table:
+            self._func_state_lookup_table[func_def_node]["called"] = True
 
-        # Handles currying by adding returned function to _func_lookup_table
+        # Handles closures by adding returned function to
+        # _func_state_lookup_table
         return_node = func_saplings_obj._return_node
         if isinstance(return_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            self._func_lookup_table[return_node] = {
-                **func_saplings_obj._func_lookup_table[return_node],
-                **{"called": False, "curried_output": True}
+            self._func_state_lookup_table[return_node] = {
+                **func_saplings_obj._func_state_lookup_table[return_node],
+                **{"called": False, "is_closure": True}
             }
 
         return return_node
@@ -251,7 +265,7 @@ class Saplings(ast.NodeVisitor):
 
             return None
 
-        for root in self.forest:
+        for root in self._hierarchies:
             matching_module = find_matching_node(root, root_module)
 
             if matching_module:
@@ -261,10 +275,10 @@ class Saplings(ast.NodeVisitor):
         if not term_node:
             root_node = utils.Node(root_module)
             if standard_import:
-                self._node_lookup_table[root_module] = root_node
+                self._namespace[root_module] = root_node
 
             term_node = root_node
-            self.forest.append(term_node)
+            self._hierarchies.append(term_node)
 
         for idx in range(len(sub_modules[1:])):
             sub_module = sub_modules[idx + 1]
@@ -277,7 +291,7 @@ class Saplings(ast.NodeVisitor):
             else:
                 new_sub_module = utils.Node(sub_module)
                 if standard_import:
-                    self._node_lookup_table[sub_module_alias] = new_sub_module
+                    self._namespace[sub_module_alias] = new_sub_module
 
                 term_node.add_child(new_sub_module)
                 term_node = new_sub_module
@@ -296,15 +310,17 @@ class Saplings(ast.NodeVisitor):
             string representation of the target node in the assignment
         """
 
+        # TODO (V1): Confirm this is right
+
         sub_aliases = []
-        for alias in self._node_lookup_table.keys():
+        for alias in self._namespace.keys():
             for sub_alias_signifier in ('(', '.'):
                 if alias.startswith(targ_str + sub_alias_signifier):
                     sub_aliases.append(alias)
                     break
 
         for alias in sub_aliases:
-            del self._node_lookup_table[alias]
+            del self._namespace[alias]
 
     def _process_assignment(self, target, value):
         """
@@ -315,8 +331,7 @@ class Saplings(ast.NodeVisitor):
             2. An alias for a known d-tree node being reassigned to an unknown
                AST node (K = U)
             3. An unknown alias being assigned to a known d-tree node (U = K)
-        For any one of these, the current namespace (self._node_lookup_table) is
-        modified.
+        For any one of these, the current namespace is modified.
 
         Parameters
         ----------
@@ -332,32 +347,32 @@ class Saplings(ast.NodeVisitor):
         tokenized_value = utils.recursively_tokenize_node(value, tokens=[])
         val_node = self._process_connected_tokens(tokenized_value)
 
-        # TODO (V2): Handle assignments to data structures. For an assignment like
-        # foo = [bar(i) for i in range(10)], foo.__index__() should be an alias
-        # for bar().
+        # TODO (V2): Handle assignments to data structures. For an assignment
+        # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
+        # alias for bar().
 
         targ_str = utils.stringify_tokenized_nodes(tokenized_target)
         # val_str = utils.stringify_tokenized_nodes(tokenized_value)
 
         # Type I: Known node reassigned to other known node (K2 = K1)
         if targ_node and val_node:
-            self._node_lookup_table[targ_str] = val_node
+            self._namespace[targ_str] = val_node
             self._delete_all_sub_aliases(targ_str)
         # Type II: Known node reassigned to unknown node (K1 = U1)
         elif targ_node and not val_node:
-            del self._node_lookup_table[targ_str]
+            del self._namespace[targ_str]
             self._delete_all_sub_aliases(targ_str)
         # Type III: Unknown node assigned to known node (U1 = K1)
         elif not targ_node and val_node:
-            self._node_lookup_table[targ_str] = val_node
+            self._namespace[targ_str] = val_node
 
     def _process_connected_tokens(self, tokens, increment_count=False):
         """
-        This is the master function for appendign to a d-tree. `tokens` is a
-        list of Name and Args tokens, representing a "connected construct" ––
-        meaning that, if the first token is an alias for a node in the d-tree,
-        the next token is a child of that node. Here's an example of a
-        connected construct:
+        This is the master function for appending to an object hierarchy.
+        `tokens` is a list of Name and Args tokens, representing a "connected
+        construct" –– meaning that, if the first token is an identifier for an
+        object node, the next token is a child of that node. Here's an example of
+        a connected construct:
 
         ```python
         module.attr.foo(module.bar[0] + 1, key=lambda x: x ** 2)
@@ -389,13 +404,13 @@ class Saplings(ast.NodeVisitor):
         ]
         ```
 
-        (Note that the `ast.Num` and `ast.Lambda` nodes are not connected to the
+        Note that the `ast.Num` and `ast.Lambda` nodes are not connected to the
         other tokens, and are represented as AST nodes. These nodes are
-        processed by `self.visit`.)
+        processed by `self.visit`.
 
         When these tokens are passed into `_process_connected_tokens`, the
         following subtrees are created and added as children to the `module`
-        d-tree: `attr -> foo -> ()` and
+        hierarchy: `attr -> foo -> ()` and
         `bar -> __index__ -> () -> __add__ -> ()`. And if `increment_count` is
         set to `True`, then the frequency value of the terminal nodes in these
         subtrees is incremented.
@@ -415,71 +430,77 @@ class Saplings(ast.NodeVisitor):
 
         # TODO (V1): Handle user-defined function calls from CLASSES
 
+        def handle_user_defined_func_call(func_def_node, token):
+            adjusted_namespace = self._namespace.copy()
+
+            # If not, then function was defined in the parent scope
+            if func_def_node in self._func_state_lookup_table:
+                func_state = self._func_state_lookup_table[func_def_node]
+                if func_state["is_closure"]:
+                    adjusted_namespace = {
+                        **self._namespace.copy(),
+                        **func_state["namespace"]
+                    }
+
+            return_node = self._process_user_defined_func(
+                func_def_node,
+                adjusted_namespace,
+                token.args
+            ) # TODO (V1): Handle tuple returns
+
+            return return_node
+
         func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef)
-        node_stack, func_def_node = [], None
+        node_stack, curr_func_def_node = [], None
         for index, token in enumerate(tokens):
             if isinstance(token, utils.ArgsToken):
-                if func_def_node: # Evaluate the function call
-                    if func_def_node not in self._func_lookup_table:
-                        namespace = self._node_lookup_table.copy()
-                    else:
-                        func_state = self._func_lookup_table[func_def_node]
-                        is_curried_output = func_state["curried_output"]
-                        if is_curried_output:
-                            namespace = {
-                                **self._node_lookup_table.copy(),
-                                **func_state["namespace"]
-                            }
-                        else:
-                            namespace = self._node_lookup_table.copy()
-
-                    return_node = self._process_user_defined_func(
-                        func_def_node=func_def_node,
-                        namespace=namespace,
-                        arg_vals=token.args
-                    ) # TODO (V1): Handle tuples
+                if curr_func_def_node: # Evaluate call of user-defined function
+                    return_node = handle_user_defined_func_call(
+                        curr_func_def_node,
+                        token
+                    )
 
                     if isinstance(return_node, func_def_types):
-                        func_def_node = return_node
+                        curr_func_def_node = return_node
                     else:
-                        func_def_node = None
+                        curr_func_def_node = None
 
-                    if return_node: # QUESTION: What if return_node is func_def?
+                    if isinstance(return_node, utils.Node):
                         node_stack.append(return_node)
 
                     continue
                 else:
                     for arg_token in token:
                         arg_node = self._process_connected_tokens(
-                            tokens=arg_token.arg,
-                            increment_count=increment_count
+                            arg_token.arg,
+                            increment_count
                         )
             elif not isinstance(token, utils.NameToken): # token is ast.AST node
                 self.visit(token) # TODO (V2): Handle lambdas
                 continue
 
-            if func_def_node:
-                func_def_node = None
+            if curr_func_def_node: # TODO (V1): Check if this is ever hit
+                curr_func_def_node = None
 
             token_sequence = tokens[:index + 1]
             token_str = utils.stringify_tokenized_nodes(token_sequence)
 
-            if token_str in self._node_lookup_table:
-                node = self._node_lookup_table[token_str]
+            if token_str in self._namespace:
+                node = self._namespace[token_str]
 
                 if isinstance(node, func_def_types):
-                    func_def_node = node
+                    curr_func_def_node = node
                     continue
 
                 node_stack.append(node)
             elif node_stack: # Base node exists –– create and append its child
                 child_node = utils.Node(str(token))
                 node_stack[-1].add_child(child_node)
-                self._node_lookup_table[token_str] = child_node
+                self._namespace[token_str] = child_node
                 node_stack.append(child_node)
 
-        if func_def_node:
-            return func_def_node
+        if curr_func_def_node:
+            return curr_func_def_node
         elif not node_stack:
             return None
 
@@ -498,7 +519,7 @@ class Saplings(ast.NodeVisitor):
                 standard_import=not bool(module.asname)
             )
 
-            self._node_lookup_table[alias] = module_leaf_node
+            self._namespace[alias] = module_leaf_node
 
     def visit_ImportFrom(self, node):
         if node.level: # Ignores relative imports
@@ -519,13 +540,13 @@ class Saplings(ast.NodeVisitor):
             for child in module_node.children:
                 if alias.name == child.id:
                     child_exists = True
-                    self._node_lookup_table[alias_id] = child
+                    self._namespace[alias_id] = child
 
                     break
 
             if not child_exists:
                 new_child = utils.Node(alias.name)
-                self._node_lookup_table[alias_id] = new_child
+                self._namespace[alias_id] = new_child
 
                 module_node.add_child(new_child)
 
@@ -562,7 +583,7 @@ class Saplings(ast.NodeVisitor):
 
             self._delete_all_sub_aliases(target_str)
 
-    ## Function and Class Definition Handlers ##
+    ## Function and Class Handlers ##
 
     def visit_ClassDef(self, node):
         pass # TODO (V1)
@@ -578,9 +599,9 @@ class Saplings(ast.NodeVisitor):
         the end of the AST traversal and in the namespace it was defined in.
 
         This processing is done by self._process_user_defined_func. All this
-        visitor does is alias the node (i.e. saves it to self._node_lookup_table)
-        and adds it to the self._func_lookup_table, along with a copy of the
-        namespace in the state the function is defined in.
+        visitor does is alias the node (i.e. saves it to self._namespace)
+        and adds it to the self._func_state_lookup_table, along with a copy of
+        the namespace in the state the function is defined in.
 
         Parameters
         ----------
@@ -595,18 +616,20 @@ class Saplings(ast.NodeVisitor):
 
         # TODO (V2): Handle decorators
 
-        self._func_lookup_table[node] = {
-            "namespace": self._node_lookup_table.copy(),
+        # NOTE: namespace is only used if the function is never called or if its
+        # a closure
+        self._func_state_lookup_table[node] = {
+            "namespace": self._namespace.copy(),
             "called": False,
-            "curried_output": False
+            "is_closure": False
         }
-        self._node_lookup_table[node.name] = node
+        self._namespace[node.name] = node
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
 
     def visit_Lambda(self, node):
-        namespace = self._node_lookup_table.copy()
+        namespace = self._namespace.copy()
         args = node.args.args + node.args.kwonlyargs
         if node.args.vararg:
             args += [node.args.vararg]
@@ -622,7 +645,8 @@ class Saplings(ast.NodeVisitor):
             del namespace[arg_name]
 
         self._run_child_saplings_instance(node.body, namespace)
-        return # TODO (V2)
+
+        # TODO (V2): Handle assignments to lambdas and lambda function calls
 
     def visit_Return(self, node):
         if node.value:
@@ -631,21 +655,7 @@ class Saplings(ast.NodeVisitor):
 
         # TODO (V1): Stop processing of everything under return statement
 
-    ## Control Flow ##
-
-    # TODO: Delete this
-    def _diff_namespaces(self, namespace):
-        aliases_to_ignore = []
-        for alias, node in self._node_lookup_table.items():
-            if alias in namespace:
-                if namespace[alias] == node:
-                    continue
-                else: # K1 = K2
-                    aliases_to_ignore.append(alias)
-            else: # K = U
-                aliases_to_ignore.append(alias)
-
-        return aliases_to_ignore
+    ## Control Flow Handlers ##
 
     def visit_If(self, node):
         """
@@ -664,7 +674,7 @@ class Saplings(ast.NodeVisitor):
         for else_node in node.orelse:
             self._run_child_saplings_instance(
                 tree=else_node,
-                namespace=self._node_lookup_table.copy()
+                namespace=self._namespace.copy()
             )
 
         self.visit(ast.Module(body=node.body))
@@ -710,6 +720,7 @@ class Saplings(ast.NodeVisitor):
             self.visit_ExceptHandler(except_handler_node)
 
         self.visit(ast.Module(body=node.body))
+
         # Executes only if node.body doesn't throw an exception
         for else_node in node.orelse:
             self.visit_If(else_node)
@@ -718,7 +729,7 @@ class Saplings(ast.NodeVisitor):
         self.visit(ast.Module(body=node.finalbody))
 
     def visit_ExceptHandler(self, node):
-        namespace = self._node_lookup_table.copy()
+        namespace = self._namespace.copy()
 
         if node.type:
             tokenized_exception = utils.recursively_tokenize_node(node.type, [])
@@ -755,7 +766,7 @@ class Saplings(ast.NodeVisitor):
     def visit_Break(self, node):
         pass # TODO (V1)
 
-    ## Connected Construct Handlers ##
+    ## Construct Handlers ##
 
     @utils.connected_construct_handler
     def visit_Name(self, node):
@@ -783,15 +794,15 @@ class Saplings(ast.NodeVisitor):
 
     ## Data Structure Handlers ##
 
-    # TODO (V2): Allow Type I assignments to dictionaries, lists, sets, and tuples.
-    # Right now, assignments to data structures are treated as Type II. For
-    # example, "attr" would not be captured in the following script:
+    # TODO (V2): Allow Type I assignments to dictionaries, lists, sets, and
+    # tuples. Right now, assignments to data structures are treated as Type II.
+    # For example, "attr" would not be captured in the following script:
     #   import module
     #   my_var = [module.func0(), module.func1(), module.func2()]
     #   my_var[0].attr
 
     def _comprehension_helper(self, elts, generators):
-        namespace = self._node_lookup_table.copy()
+        namespace = self._namespace.copy()
         child_ifs = []
         for index, generator in enumerate(generators):
             iter_node = ast.Subscript(
@@ -841,9 +852,9 @@ class Saplings(ast.NodeVisitor):
 
     ## Public Methods ##
 
-    def trees(self, flattened=False):
+    def hierarchies(self, flattened=False):
         trees = {} if flattened else []
-        for tree in self.forest:
+        for tree in self._hierarchies:
             if flattened:
                 trees[tree.id] = tree.paths()
             else:
