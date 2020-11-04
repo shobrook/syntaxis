@@ -163,12 +163,10 @@ def tokenize_slice(slice):
 
             yield recursively_tokenize_node(partial_slice, [])
 
+
 # IDEA: Instead of calling recursively_tokenize_node, call self.generic_visit
 # and have the reference handlers (visit_Name, visit_Call, etc.) do the
 # tokenization and return the node; return None if not tokenizable
-
-# In _process_connected_tokens, should you call self.generic_visit on the
-# arg nodes?
 def recursively_tokenize_node(node, tokens):
     """
     Takes a node representing an identifier or function call and recursively
