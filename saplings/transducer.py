@@ -852,7 +852,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Public Methods ##
 
-    def hierarchies(self, flattened=False):
+    def trees(self, flattened=False):
         trees = {} if flattened else []
         for tree in self._hierarchies:
             if flattened:
