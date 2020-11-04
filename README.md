@@ -3,7 +3,10 @@
   <br />
 </h1>
 
-`saplings` is a static analysis tool for Python. Given a Python program, `saplings` builds object hierarchies for imported modules based on their usage in the program. If the input program used every construct in a module, then this tree would represent its entire API.<!--Too strong of a statement?-->
+QUESTION: Are these nodes OBJECTS or ATTRIBUTES?
+TODO: Replace word 'context' with 'scope'.
+
+`saplings` is a static analysis tool for Python. Given a program, `saplings` will build object hierarchies for every module imported in the program. An object hierarchy is a tree where the root node represents the module and each child represents a descendant attribute of that module. These trees are useful for making inferences about a module's API, mining patterns in how a module is used, and [duck typing](https://en.wikipedia.org/wiki/Duck_typing).
 
 <img src="./demo.gif" />
 
@@ -29,9 +32,9 @@ You can install `saplings` with `pip`:
 $ pip install saplings
 ```
 
-## Getting Started
+## Usage
 
-Import the `Saplings` object and initialize it with the root node of an AST (you'll need the `ast` module for this).
+Using `saplings` takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) –– you'll need to import the `ast` module for this. Then, import the `Saplings` object and initialize it with the root node of the AST.
 
 ```python
 import ast
@@ -42,12 +45,81 @@ program_ast = ast.parse(my_program)
 my_saplings = Saplings(program_ast)
 ```
 
-Initializing `Saplings` does ...
+That's it. To access the object hierarchies, use the `trees` attribute of your `Saplings` object, like so:
 
-Here's how to print out the d-trees, save them as JSON, etc. ...
+```python
+my_saplings.trees # => [ObjectNode(), ObjectNode(), ..., ObjectNode()]
+```
+
+### Printing an Object Hierarchy
+
+`trees` holds a list of `ObjectNode`s, each representing the root node of an object hierarchy. Each `ObjectNode` has the following attributes:
+* **`name` _(str)_:** Name of the object
+* **`is_callable` _(bool)_:** Whether the object was called in the code
+* **`order` _(int)_:** Indicates the type of connection to the parent node (e.g. `0` is an attribute of the parent, `1` is an attribute of the output of the parent when called, etc.)
+* **`children` _(list)_:** List of child nodes
+
+TODO: Create a function for nicely printing an object hierarchy given its root node.
+
+## Understanding the Object Hierarchy
 
 How to interpret the d-tree (e.g. how to interpret __index__, ())
-- Function calls include subscripts (__index__), comparisons, and binary operations
+- Function calls include subscripts (__index__), comparisons, and binary operations.
+
+`saplings` can generally track module and user-defined functions, but there are some edge cases it cannot handle. For example, because module functions must be treated as black-boxes to `saplings`, conditional return types cannot be accounted for. Consider this code and the hierarchy `saplings` produces:
+
+```python
+import module
+
+module.foo(5).bar1()
+module.foo(10).bar2()
+```
+
+```
+module
+ +-- foo
+ |   +-- bar1
+ |   +-- bar2
+```
+
+However, if `module.foo` is defined as:
+
+```python
+def foo(x):
+  if x <= 5:
+    return ObjectA()
+  else:
+    return ObjectB()
+```
+
+and `ObjectB` doesn't have `bar1` as an attribute, then
+`saplings` will treat `bar1` and `bar2` as attributes of the same object.
+
+***
+
+Everything underneath a return, break, or continue statement will not be tracked.
+
+***
+
+Sapligns _can_ track object flow through curried functions. For example:
+
+```python
+import module
+
+def compose(g, f):
+    def h(x):
+        return g(f(x))
+    return h
+
+def func1(t):
+  return t.foo
+
+def func2(t):
+  return t.bar
+
+convert = compose(func1, func2)
+convert(module.attr)
+```
 
 ## Limitations
 
@@ -55,7 +127,7 @@ How to interpret the d-tree (e.g. how to interpret __index__, ())
 
 ### Data Structures
 
-As of right now, saplings can't track assignments to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. For example, consider the following:
+As of right now, `saplings` can't track assignments to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. For example, consider the following:
 
 ```python
 import module
@@ -64,31 +136,11 @@ my_var = [module.foo(1), module.foo(2), module.foo(3)]
 my_var[0].bar()
 ```
 
-Here, `bar` would not be captured and added to the d-tree for `module`. However, this isn't to say `saplings` doesn't capture module constructs used _inside_ data structures. In the example above, a node for `foo` would still be created and appended to the d-tree.
-
-### Functions
-
-```python
-import module
-
-module.foo(5).attr
-module.foo(10).attr.bar()
-```
-
-`module -> foo -> attr -> bar`
-Even though `module.foo()` could output a different object (that happens to have an attribute named `attr`) when the input is `10`.
-
-#### Recursion
-
-#### Currying
-
-#### Closures
-
-#### Generators
+Here, `bar` would not be captured and added to the hierarchy for `module`. However, `saplings` will still capture objects used _inside_ data structures. In the example above, a node for `foo` would still be created and appended to the hierarchy.
 
 ### Control Flow
 
-Handling control flow is tricky. Tracking module objects in `if`, `try`/`except`, `for`, `while`, and `with` blocks requires making assumptions about what code actually executes. For example, consider the following program:
+Handling control flow is tricky. Tracking module objects in loops and conditionals requires making assumptions about what code actually executes. For example, consider the following program:
 
 ```python
 import module
@@ -97,7 +149,7 @@ for item in module.items():
   print(item.foo())
 ```
 
-If `module.items()` returns an empty list, then `item.foo` will never be called. In that situation, adding the `__index__ -> foo` subtree to `module -> items` would be a false positive. To handle this, saplings _should_ branch out and produce two possible trees for this module (see issue #X): `module -> items` and `module -> items -> __index__ -> foo`. But as of right now, saplings will only produce the latter tree –– that is, we assume the bodies of `for` loops are always executed.
+If `module.items()` returns an empty list, then `item.foo` will never be called. In that situation, adding the `__index__ -> foo` subtree to `module -> items` would be a false positive. To handle this, saplings _should_ branch out and produce two possible trees for this module: `module -> items` and `module -> items -> __index__ -> foo`. But as of right now, saplings will only produce the latter tree –– that is, we assume the bodies of `for` loops are always executed.
 
 #### `while` loops
 
@@ -105,7 +157,7 @@ If `module.items()` returns an empty list, then `item.foo` will never be called.
 
 #### `if`/`else` blocks
 
-We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in the first `if` block in a series of `if`s, `elif`s, and/or `else`s are the only changes assumed to persist. For example, consider this code and the d-tree saplings produces:
+We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in the first `if` block in a series of `if`s, `elif`s, and/or `else`s are the only changes assumed to persist into the parent context. For example, consider this code and the d-tree saplings produces:
 
 ```python
 import module
@@ -141,7 +193,7 @@ Our assumption applies to ternary expressions too. For example, the assignment `
 
 `try` blocks are assumed to always execute, and the `except` block is assumed not to execute. Like with `if`/`else` blocks, this assumption does not mean the `except` body is ignored. <!--Object flow-->Module usage is still tracked inside the `except` block, but changes to the namespace do not persist outside the block.
 
-#### `continue` and `break` statements
+<!-- #### `continue` and `break` statements
 
 If `continue` or `break` is used inside a loop, we assume the code underneath the statement does not execute. For example, consider this program:
 
@@ -153,11 +205,48 @@ for i in range(10):
   module.foo()
 ```
 
-Here, `foo` would not be captured and added to the `module` d-tree, which _may_ be a false negative, although it isn't necessarily. Notably, our assumption will not produce any false positives.
+This isn't really a limitation, but we do ignore any module usage patterns in the code underneath `continue` statements, even if they are legitimate. Notably, our assumption will never produce any false positives. -->
+
+### Functions
+
+#### Unevaluated Functions
+
+Functions aren't processed until they're called, as the object flow can depend on the types of the inputs. But if a funciton is never called, they're processed in the namespace in which they were defined, with no values for its inputs.
+
+#### Recursion
+
+Saplings cannot process recursive function calls. Consider the following example:
+
+```python
+import module
+
+def my_recursive_func(input):
+  if input > 5:
+    return my_recursive_func(input - 1)
+  elif input > 1:
+    return module.foo
+  else:
+    return module.bar
+
+output = my_recursive_func(5)
+output.attr()
+```
+
+We know this function returns `module.foo`, but Saplings cannot tell which base case is hit, and therefore cannot track the output. To avoid false positives, we assume this function returns nothing, and thus `attr` will not be captured and added to the object hierarchy.
+
+#### Generators
+
+For now, generators are ignored during  
+
+#### Decorators
+
+#### Single-Star Arguments
+
+#### Anonymous Functions
 
 ### Miscellaneous
 
-Code in `exec` statements is ignored. `nonlocals` is ignored.
+Code in `exec` statements is ignored. `nonlocals` is ignored. Star and double-star arguments.
 
 #### `Saplings.analyze_module_usage(conservative=False, namespace={})`
 
