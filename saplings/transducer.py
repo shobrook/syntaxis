@@ -34,6 +34,10 @@ class Saplings(ast.NodeVisitor):
         # and a flag for whether they've been evaluated in the current scope
         self._func_state_lookup_table = {}
 
+        # Holds FunctionDef nodes that were defined in a different scope but
+        # called in the current scope
+        self._called_but_undefined_funcs = {}
+
         # Object hierarchy node (or FuncDef/ClassDef) corresponding to the first
         # evaluated return statement in the AST
         self._return_node = None
@@ -52,7 +56,7 @@ class Saplings(ast.NodeVisitor):
                 continue
 
             # Skip to handle currying, as this function may be called in the
-            # parent context
+            # parent scope
             if func_def_node == self._return_node:
                 continue
 
@@ -61,30 +65,37 @@ class Saplings(ast.NodeVisitor):
                 namespace=data["namespace"]
             )
 
-    ## ... ##
+    ## Helpers ##
 
-    def _run_child_saplings_instance(self, tree, namespace):
+    def _process_sub_context(self, tree, namespace):
         """
-        Utility function used to process a subtree in the AST with a different
-        namespace from its parent, or such that changes to the namespace in the
-        subtree don't apply to the parent namespace.
+        Wrapper function for processing a subtree in the AST with a different
+        namespace from its parent (e.g. a function), or such that changes to the
+        namespace in the subtree don't apply to the parent namespace (e.g. in
+        the body of an if block).
 
-        TODO: Explain this better.
+        Parameters
+        ----------
+        tree:
+        namespace:
         """
 
         print("\tEntering child Saplings instance\n") # TEMP
-        child_obj = Saplings(
+        child_scope = Saplings(
             tree=tree,
             hierarchies=self._hierarchies,
             namespace=namespace
         )
 
-        for func_def_node, data in child_obj._func_state_lookup_table.items():
+        # Pushes any called functions in the child scope up to the parent scope
+        for func_def_node in child_scope._called_but_undefined_funcs:
             if func_def_node in self._func_state_lookup_table:
-                self._func_state_lookup_table[func_def_node]["called"] = data["called"]
+                self._func_state_lookup_table[func_def_node]["called"] = True
+            else:
+                self._called_but_undefined_funcs.add(func_def_node)
 
         print("\tPopping out of Saplings instance\n") # TEMP
-        return child_obj
+        return child_scope
 
     ## Processors ##
 
@@ -120,7 +131,7 @@ class Saplings(ast.NodeVisitor):
             arg_name_index = index + (num_args - num_defaults)
             arg_name = arg_names[arg_name_index]
 
-            default_node = self._run_child_saplings_instance(
+            default_node = self._process_sub_context(
                 tree=ast.Module(body=[]),
                 namespace=namespace
             )._process_connected_tokens(default)
@@ -163,7 +174,7 @@ class Saplings(ast.NodeVisitor):
         arg_names = [arg.arg for arg in func_params.args]
         kwonlyarg_names = [arg.arg for arg in func_params.kwonlyargs]
 
-        # OH nodes corresponding to default values
+        # Object nodes corresponding to default values
         default_nodes, null_defaults = self._process_arg_defaults(
             arg_names=arg_names,
             defaults=func_params.defaults,
@@ -204,8 +215,8 @@ class Saplings(ast.NodeVisitor):
 
             func_namespace[arg_name] = arg_node
 
-        # TODO (V2): Simply create ast.Assign objects for each default argument and
-        # prepend them to func_def_node.body –– let the Saplings instance
+        # TODO (V2): Simply create ast.Assign objects for each default argument
+        # and prepend them to func_def_node.body –– let the Saplings instance
         # below do the rest. Not necessary but it would clean up your code.
 
         # Handles recursive functions by deleting all names of the function node
@@ -213,7 +224,7 @@ class Saplings(ast.NodeVisitor):
             if node == func_def_node:
                 del func_namespace[alias]
 
-        func_saplings_obj = self._run_child_saplings_instance(
+        func_saplings_obj = self._process_sub_context(
             ast.Module(body=func_def_node.body),
             func_namespace
         )
@@ -221,6 +232,8 @@ class Saplings(ast.NodeVisitor):
         # context and therefore isn't in the lookup table
         if func_def_node in self._func_state_lookup_table:
             self._func_state_lookup_table[func_def_node]["called"] = True
+        else:
+            self._called_but_undefined_funcs.add(func_def_node)
 
         # Handles closures by adding returned function to
         # _func_state_lookup_table
@@ -644,7 +657,7 @@ class Saplings(ast.NodeVisitor):
 
             del namespace[arg_name]
 
-        self._run_child_saplings_instance(node.body, namespace)
+        self._process_sub_context(node.body, namespace)
 
         # TODO (V2): Handle assignments to lambdas and lambda function calls
 
@@ -672,7 +685,7 @@ class Saplings(ast.NodeVisitor):
         self.visit(node.test)
 
         for else_node in node.orelse:
-            self._run_child_saplings_instance(
+            self._process_sub_context(
                 tree=else_node,
                 namespace=self._namespace.copy()
             )
@@ -744,7 +757,7 @@ class Saplings(ast.NodeVisitor):
                 else:
                     namespace[alias_str] = exception_node
 
-        body_saplings_obj = self._run_child_saplings_instance(
+        body_saplings_obj = self._process_sub_context(
             ast.Module(body=node.body),
             namespace
         )
@@ -815,7 +828,7 @@ class Saplings(ast.NodeVisitor):
             if not index:
                 iter_tree_node = self._process_connected_tokens(iter_tokens)
             else:
-                iter_tree_node = self._run_child_saplings_instance(
+                iter_tree_node = self._process_sub_context(
                     ast.Module(body=[]),
                     namespace
                 )._process_connected_tokens(iter_tokens)
@@ -829,7 +842,7 @@ class Saplings(ast.NodeVisitor):
 
             child_ifs.extend(generator.ifs)
 
-        self._run_child_saplings_instance(
+        self._process_sub_context(
             ast.Module(body=child_ifs + elts),
             namespace
         )
