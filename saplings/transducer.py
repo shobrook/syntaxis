@@ -36,11 +36,15 @@ class Saplings(ast.NodeVisitor):
 
         # Holds FunctionDef nodes that were defined in a different scope but
         # called in the current scope
-        self._called_but_undefined_funcs = {}
+        self._called_but_undefined_funcs = set()
 
         # Object hierarchy node (or FuncDef/ClassDef) corresponding to the first
         # evaluated return statement in the AST
         self._return_node = None
+
+        # True when a Return, Continue, or Break node is hit –– stops traversal
+        # of subtree
+        self._stop_execution = False
 
         # Holds root nodes of object hierarchy trees
         self._hierarchies = hierarchies
@@ -65,6 +69,17 @@ class Saplings(ast.NodeVisitor):
                 namespace=data["namespace"]
             )
 
+    def visit(self, node):
+        """
+        Visits a node iff self._stop_execution == False.
+        """
+
+        method = "visit_" + node.__class__.__name__
+        visitor = getattr(self, method, self.generic_visit)
+
+        if not self._stop_execution:
+            return visitor(node)
+
     ## Helpers ##
 
     def _process_sub_context(self, tree, namespace):
@@ -87,7 +102,8 @@ class Saplings(ast.NodeVisitor):
             namespace=namespace
         )
 
-        # Pushes any called functions in the child scope up to the parent scope
+        # Pushes called functions up the context stack until they reach the
+        # scope in which they were defined
         for func_def_node in child_scope._called_but_undefined_funcs:
             if func_def_node in self._func_state_lookup_table:
                 self._func_state_lookup_table[func_def_node]["called"] = True
@@ -228,8 +244,7 @@ class Saplings(ast.NodeVisitor):
             ast.Module(body=func_def_node.body),
             func_namespace
         )
-        # TODO (V1): Handle case where function was defined in the parent
-        # context and therefore isn't in the lookup table
+
         if func_def_node in self._func_state_lookup_table:
             self._func_state_lookup_table[func_def_node]["called"] = True
         else:
@@ -323,17 +338,11 @@ class Saplings(ast.NodeVisitor):
             string representation of the target node in the assignment
         """
 
-        # TODO (V1): Confirm this is right
-
-        sub_aliases = []
-        for alias in self._namespace.keys():
+        for alias in list(self._namespace.keys()):
             for sub_alias_signifier in ('(', '.'):
                 if alias.startswith(targ_str + sub_alias_signifier):
-                    sub_aliases.append(alias)
+                    del self._namespace[alias]
                     break
-
-        for alias in sub_aliases:
-            del self._namespace[alias]
 
     def _process_assignment(self, target, value):
         """
@@ -378,6 +387,8 @@ class Saplings(ast.NodeVisitor):
         # Type III: Unknown node assigned to known node (U1 = K1)
         elif not targ_node and val_node:
             self._namespace[targ_str] = val_node
+            # TODO (V1): Handle all sub-aliases of val_node (i.e. if x = module.foo
+            # and x.bar and y = x, then y.bar should be in the namespace)
 
     def _process_connected_tokens(self, tokens, increment_count=False):
         """
@@ -492,7 +503,7 @@ class Saplings(ast.NodeVisitor):
                 self.visit(token) # TODO (V2): Handle lambdas
                 continue
 
-            if curr_func_def_node: # TODO (V1): Check if this is ever hit
+            if curr_func_def_node:
                 curr_func_def_node = None
 
             token_sequence = tokens[:index + 1]
@@ -568,8 +579,8 @@ class Saplings(ast.NodeVisitor):
 
         values = node.value
         targets = node.targets if hasattr(node, "targets") else (node.target,)
-        for target in targets:
-            if isinstance(target, ast.Tuple):
+        for target in targets: # Multiple assignment (e.g. a = b = ...)
+            if isinstance(target, ast.Tuple): # Unpacking (e.g. a, b = ...)
                 for idx, elt in enumerate(target.elts):
                     if isinstance(values, ast.Tuple):
                         self._process_assignment(elt, values.elts[idx])
@@ -597,9 +608,6 @@ class Saplings(ast.NodeVisitor):
             self._delete_all_sub_aliases(target_str)
 
     ## Function and Class Handlers ##
-
-    def visit_ClassDef(self, node):
-        pass # TODO (V1)
 
     def visit_FunctionDef(self, node):
         """
@@ -666,7 +674,101 @@ class Saplings(ast.NodeVisitor):
             tokenized_node = utils.recursively_tokenize_node(node.value, [])
             self._return_node = self._process_connected_tokens(tokenized_node)
 
-        # TODO (V1): Stop processing of everything under return statement
+        self._stop_execution = True
+
+    def visit_ClassDef(self, node):
+        """
+        """
+        # How are classes different from functions?
+        # You can do:
+            # my_class.my_static_method()
+            # my_class().my_instance_method()
+            # my_class.my_static_var
+            # my_class().my_instance_var
+        # When a class is instantiated (i.e. my_class()), this is equivalent to (my_class.__init__())
+        # The namespace for all instance methods changes when __init__ is called (since assignments to self is made)
+
+        self._namespace[node.name] = node
+        for base_node in node.bases: # TODO: Handle inheritance (?)
+            self.visit(base_node)
+
+        # TODO (V2): Handle metaclasses
+        # TODO (V2): Handle decorators
+
+        def stringify_target(target):
+            tokens = utils.recursively_tokenize_node(target, tokens=[])
+            targ_str = utils.stringify_tokenized_nodes(tokens)
+
+            return targ_str
+
+        # TODO: Handle @classmethod decorators
+        # TODO: Handle non-instance methods without decorators (i.e. methods
+        # that just don't have `self` as an argument)
+        methods = {"static": [], "class": [], "instance": []}
+        static_variables = []
+        body_without_methods = []
+        for n in node.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for decorator in n.decorator_list:
+                    if decorator.id == "staticmethod":
+                        methods["static"].append(n)
+                        break
+                else:
+                    methods["instance"].append(n)
+
+                continue
+            elif isinstance(n, ast.Assign): # TODO: Handle AnnAssign and AugAssign
+                # BUG: Static variables can be defined without an assignment.
+                # For example:
+                    # class foo(object):
+                    #     for x in range(10):
+                    #         pass
+                # foo.x is valid.
+                for target in n.targets:
+                    if isinstance(target, ast.Tuple):
+                        for element in target.elts:
+                            static_variables.append(stringify_target(element))
+                    else:
+                        static_variables.append(stringify_target(target))
+
+            body_without_methods.append(n)
+
+        class_context = self._process_sub_context(
+            tree=ast.Module(body=body_without_methods),
+            namespace=self._namespace.copy()
+        )
+        class_level_namespace = class_context._namespace
+
+        for name, n in class_context._namespace.items():
+            if name in static_variables:
+                self._namespace['.'.join((node.name, name))] = n
+
+        for static_method in methods["static"]:
+            adjusted_name = '.'.join((node.name, static_method.name))
+            static_method.name = adjusted_name
+            self.visit_FunctionDef(static_method)
+
+
+        # Add classdefnode to class_state_lookup_table and figure out how to handle multiple class instances with different states
+        # and their functions being called
+
+        # If class is instantiated: process my_class.__init__() like a normal function call, except handle 'self'
+        # OR PROCESS my_class.__call__() if __call__ is overloaded
+
+
+        # class_state_lookup_table = {
+        # CLASSDEF:
+        #     "namespace": {}, # Store `self` bullshit here, and class variables
+        #     "called": False,
+        #     "aliases": set()
+        # }
+        #
+        # class_state_lookup_table = {
+        #     "FunctionDef": {
+        #         "namespace": {},
+        #         ""
+        #     }
+        # }
 
     ## Control Flow Handlers ##
 
@@ -682,8 +784,11 @@ class Saplings(ast.NodeVisitor):
             body ...
             orelse ...
         """
+
         self.visit(node.test)
 
+        # If node is processed last so the Else nodes are processed with an
+        # unaltered namespace
         for else_node in node.orelse:
             self._process_sub_context(
                 tree=else_node,
@@ -716,8 +821,11 @@ class Saplings(ast.NodeVisitor):
         )
         self.visit(ast.Module(body=[target_assignment] + node.body))
 
-        # TODO (V1): Only run this if there's no `break` statement in the body
-        self.visit(ast.Module(body=node.orelse))
+        if not self._stop_execution:
+            self.visit(ast.Module(body=node.orelse))
+
+        if not self._return_node:
+            self._stop_execution = False
 
     def visit_AsyncFor(self, node):
         self.visit_For(node)
@@ -725,8 +833,11 @@ class Saplings(ast.NodeVisitor):
     def visit_While(self, node):
         self.visit(ast.Module(body=node.body))
 
-        # TODO (V1): Only run this if there's no `break` statement in the body
-        self.visit(ast.Module(body=node.orelse))
+        if not self._stop_execution:
+            self.visit(ast.Module(body=node.orelse))
+
+        if not self._return_node:
+            self._stop_execution = False
 
     def visit_Try(self, node):
         for except_handler_node in node.handlers:
@@ -774,10 +885,10 @@ class Saplings(ast.NodeVisitor):
             pass # TODO (V1)
 
     def visit_Continue(self, node):
-        pass # TODO (V1)
+        self._stop_execution = True
 
     def visit_Break(self, node):
-        pass # TODO (V1)
+        self._stop_execution = True
 
     ## Construct Handlers ##
 
