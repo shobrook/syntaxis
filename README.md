@@ -138,7 +138,9 @@ While saplings can track object flow through many complex paths in a program, I 
 
 As of right now, `saplings` can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
-<img src="data_structures.png" />
+<h1 align="center">
+  <img width="75%" src="data_structures.png" />
+</h1>
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
 
@@ -155,7 +157,9 @@ for x in np.array([]):
 
 If `np.array([])` is an empty list, then the print statement, and therefore `x.mean()`, will never execute. In that situation, adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive. To handle this, `saplings` _should_ branch out and produce two possible trees for this module:
 
-<img src="for_loop.png" />
+<h1 align="center">
+  <img width="75%" src="for_loop.png" />
+</h1>
 
 But as of right now, `saplings` will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
 
