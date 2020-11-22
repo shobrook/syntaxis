@@ -67,7 +67,7 @@ for branches, node in render_tree(my_saplings.trees[0]):
   print(f"{branches}{node}")
 ```
 ```
-numpy
+numpy (NC, -1)
  +-- random (NC, 0)
  |   +-- randn (C, 0)
  |       +-- __sub__ (C, 1)
@@ -116,7 +116,7 @@ my_parent()().T # my_attr is a 2nd-order child of my_obj
 
 #### What counts as a function?
 
-Saplings works with a very "literal" definition of a function. Subscripts, comparisons, and binary operations are just syntactic sugar for function calls, and are represented in the tree as such. Here are some common "translations:"
+In Python, subscripts, comparisons, and binary operations are all just syntactic sugar for function calls, and are treated by `saplings` as such. Here are some common "translations:"
 
 ```python
 my_obj['my_sub'] # => my_obj.__index__('my_sub')
@@ -128,55 +128,36 @@ my_obj == None # => my_obj.__eq__(None)
 
 Saplings _statically_ analyzes the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. Consider this example of currying:
 
-```python
-import module
+<img src="currying.png" />
 
-def compose(g, f):
-    def h(x):
-        return g(f(x))
-    return h
+Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
 
-def func1(t):
-  return t.foo
-
-def func2(t):
-  return t.bar
-
-composed_func = compose(func1, func2)
-composed_func(module.var)
-```
-
-Saplings identifies `var` as an attribute of `module`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `bar` and `foo` sub-attributes.
-
-While saplings is able to track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Here are all the failure modes I'm aware of (and currently working on fixing):
+While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Here are all the failure modes I'm aware of (and currently working on fixing):
 
 ### Data Structures
 
 As of right now, `saplings` can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
-```python
-import module
+<img src="data_structures.png" />
 
-my_var = [module.foo(1), module.foo(2), module.foo(3)]
-my_var[0].bar()
-```
-
-Here, `bar` would not be captured and added to the `module` hierarchy, but `foo` would.
+Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
 
 ### Control Flow
 
-Handling control flow is tricky. Tracking object flow in loops and conditionals requires making assumptions about what code actually executes. For example, consider the following program:
+Handling control flow is tricky. Tracking object flow in loops and conditionals requires making assumptions about what code actually executes. For example, consider the following:
 
 ```python
-import module
+import numpy as np
 
-for item in module.items():
-  print(item.foo())
+for x in np.array([]):
+  print(x.mean())
 ```
 
-<!--Create visualization that demonstrates this?-->
+If `np.array([])` is an empty list, then the print statement, and therefore `x.mean()`, will never execute. In that situation, adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive. To handle this, `saplings` _should_ branch out and produce two possible trees for this module:
 
-If `module.items()` returns an empty list, then `item.foo` will never be called. In that situation, adding the `__index__ -> foo` subtree to `module -> items` would be a false positive. To handle this, saplings _should_ branch out and produce two possible trees for this module: `module -> items` and `module -> items -> __index__ -> foo`. But as of right now, saplings will only produce the latter tree –– that is, we assume the bodies of `for` loops are always executed.
+<img src="for_loop.png" />
+
+But as of right now, `saplings` will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
 
 #### `while` loops
 
@@ -218,21 +199,7 @@ Our assumption applies to ternary expressions too. For example, the assignment `
 
 #### `try`/`except` blocks
 
-`try` blocks are assumed to always execute, and the `except` block is assumed not to execute. Like with `if`/`else` blocks, this assumption does not mean the `except` body is ignored. <!--Object flow-->Module usage is still tracked inside the `except` block, but changes to the namespace do not persist outside the block.
-
-<!-- #### `continue` and `break` statements
-
-If `continue` or `break` is used inside a loop, we assume the code underneath the statement does not execute. For example, consider this program:
-
-```python
-import module
-
-for i in range(10):
-  continue
-  module.foo()
-```
-
-This isn't really a limitation, but we do ignore any module usage patterns in the code underneath `continue` statements, even if they are legitimate. Notably, our assumption will never produce any false positives. -->
+`try` blocks are assumed to always execute, and the `except` block is assumed not to execute. Like with `if`/`else` blocks, this assumption does not mean the `except` body is ignored. Object flow is still tracked inside the `except` block, but changes to the namespace do not persist outside the block.
 
 #### `return`, `break`, and `continue` statements
 
@@ -279,8 +246,7 @@ def foo(x):
     return ObjectB()
 ```
 
-and `ObjectB` doesn't have `bar1` as an attribute, then
-`saplings` will treat `bar1` and `bar2` as attributes of the same object.
+and `ObjectB` doesn't have `bar1` as an attribute, then `saplings` will treat `bar1` and `bar2` as attributes of the same object.
 
 #### Recursion
 
@@ -305,14 +271,35 @@ We know this function returns `module.foo`, but Saplings cannot tell which base 
 
 #### Generators
 
-For now, generators are ignored during  
+Generators aren't processed as iterables. Instead, `saplings` ignores `yield` statements and treats the generator like a normal function. For example:
+
+```python
+def foo():
+  for _ in range(10):
+    yield module.bar
+
+for x in foo():
+  print(x.fizz)
+```
+
+`__index__().fizz` won't be added as a subtree to `module.bar`.
 
 #### Decorators
 
+Ignored.
+
 #### Single-Star Arguments
+
+Ignored.
 
 #### Anonymous Functions
 
+Assignments/Calls are ignored.
+
+### Classes
+
+Static/Class methods work fine. Object flow through instance methods are not tracked.
+
 ### Miscellaneous
 
-Code in `exec` statements is ignored. `nonlocals` is ignored. Star and double-star arguments.
+Code in `exec` statements is ignored. `globals` and `nonlocals` are ignored. Stars / unpacking.
