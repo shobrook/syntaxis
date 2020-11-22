@@ -128,7 +128,9 @@ my_obj == None # => my_obj.__eq__(None)
 
 Saplings _statically_ analyzes the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. Consider this example of currying:
 
-<img src="currying.png" />
+<h1 align="center">
+  <img width="75%" src="currying.png" />
+</h1>
 
 Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
 
@@ -139,7 +141,7 @@ While saplings can track object flow through many complex paths in a program, I 
 As of right now, `saplings` can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
 <h1 align="center">
-  <img width="60%" src="data_structures.png" />
+  <img width="75%" src="data_structures.png" />
 </h1>
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
