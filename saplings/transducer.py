@@ -701,9 +701,6 @@ class Saplings(ast.NodeVisitor):
 
             return targ_str
 
-        # TODO: Handle @classmethod decorators
-        # TODO: Handle non-instance methods without decorators (i.e. methods
-        # that just don't have `self` as an argument)
         methods = {"static": [], "class": [], "instance": []}
         static_variables = []
         body_without_methods = []
@@ -713,7 +710,12 @@ class Saplings(ast.NodeVisitor):
                     if decorator.id == "staticmethod":
                         methods["static"].append(n)
                         break
+                    elif decorator.id == "classmethod":
+                        methods["class"].append(n)
+                        break
                 else:
+                    # TODO: Handle non-instance methods without decorators (i.e.
+                    # methods that just don't have `self` as an argument)
                     methods["instance"].append(n)
 
                 continue
@@ -743,14 +745,18 @@ class Saplings(ast.NodeVisitor):
             if name in static_variables:
                 self._namespace['.'.join((node.name, name))] = n
 
-        for static_method in methods["static"]:
-            adjusted_name = '.'.join((node.name, static_method.name))
-            static_method.name = adjusted_name
-            self.visit_FunctionDef(static_method)
+        # Handles methods that are accessed by the enclosing class
+        for method in methods["static"] + methods["class"]:
+            adjusted_name = '.'.join((node.name, method.name))
+            method.name = adjusted_name
+            self.visit_FunctionDef(method)
 
+        # NOTE: Static methods can be called from both the enclosing class and
+        # a class instance
 
-        # Add classdefnode to class_state_lookup_table and figure out how to handle multiple class instances with different states
-        # and their functions being called
+        # Add classdefnode to class_state_lookup_table and figure out how to
+        # handle multiple class instances with different states and their
+        # functions being called
 
         # If class is instantiated: process my_class.__init__() like a normal function call, except handle 'self'
         # OR PROCESS my_class.__call__() if __call__ is overloaded
@@ -874,15 +880,11 @@ class Saplings(ast.NodeVisitor):
         )
 
     def visit_withitem(self, node):
-        if isinstance(node.optional_vars, ast.Name):
-            self._process_assignment(
-                target=node.optional_vars,
-                value=node.context_expr
-            )
-        elif isinstance(node.optional_vars, ast.Tuple):
-            pass # TODO (V1)
-        elif isinstance(node.optional_vars, ast.List):
-            pass # TODO (V1)
+        assign_node = ast.Assign(
+            targets=[node.optional_vars],
+            value=node.context_expr
+        )
+        self.visit(assign_node)
 
     def visit_Continue(self, node):
         self._stop_execution = True
