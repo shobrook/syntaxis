@@ -180,7 +180,7 @@ We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do no
 Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, `saplings` would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes, like so:
 
 <p align="center">
-  <img width="50%" src="if_else_double_trees.png" />
+  <img width="65%" src="if_else_double_trees.png" />
 </p>
 
 Our assumption applies to ternary expressions too. For example, the assignment `a = b.c if condition else b.d` is, under our assumption, equivalent to `a = b.c`.
