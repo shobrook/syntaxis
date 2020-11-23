@@ -128,9 +128,9 @@ my_obj == None # => my_obj.__eq__(None)
 
 Saplings _statically_ analyzes the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. Consider this example of currying:
 
-<h1 align="center">
+<p align="center">
   <img width="75%" src="currying.png" />
-</h1>
+</p>
 
 Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
 
@@ -140,9 +140,9 @@ While saplings can track object flow through many complex paths in a program, I 
 
 As of right now, `saplings` can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
-<h1 align="center">
+<p align="center">
   <img width="75%" src="data_structures.png" />
-</h1>
+</p>
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
 
@@ -159,9 +159,9 @@ for x in np.array([]):
 
 If `np.array([])` is an empty list, then the print statement, and therefore `x.mean()`, will never execute. In that situation, adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive. To handle this, `saplings` _should_ branch out and produce two possible trees for this module:
 
-<h1 align="center">
+<p align="center">
   <img width="50%" src="for_loop.png" />
-</h1>
+</p>
 
 But as of right now, `saplings` will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
 
@@ -171,33 +171,23 @@ But as of right now, `saplings` will only produce the tree on the right –– t
 
 #### `if`/`else` blocks
 
-We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in the first `if` block in a series of `if`s, `elif`s, and/or `else`s are the only changes assumed to persist into the parent scope. For example, consider this code and the d-tree saplings produces:
+We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in `if` blocks are the only changes assumed to persist into the parent scope, whereas changes in `elif` or `else` blocks do not persist. For example, consider the following:
 
 ```python
-import module
+import numpy as np
 
-var1 = module.foo()
-var2 = module.bar()
+X = np.array([1, 2, 3])
 
 if condition:
-  var1 = module.attr1
-  var2 = None
+  X = np.matrix([1, 2, 3])
 else:
-  var1 = None
-  var2 = module.attr2
+  print(X.mean())
+  X = None
 
-var1.fizzle()
-var2.shizzle()
+print(X.sum())
 ```
 
-```
-module
- +-- foo
- +-- bar
- +-- attr1
- |   +-- fizzle
- +-- attr2
-```
+Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of
 
 Notice that our assumption can produce false positives and negatives. If it turns out `condition` is `False` and the `else` block executes, then `attr1 -> fizzle` would be a false positive and the exclusion of `attr2 -> shizzle` would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when the `if` block executes and the other for when the `else` executes.
 
@@ -209,7 +199,7 @@ Our assumption applies to ternary expressions too. For example, the assignment `
 
 #### `return`, `break`, and `continue` statements
 
-All code underneath a `return`, `break`, or `continue` statement is assumed not to execute and will not be analyzed. This is not so much a limitation as it is an assumption, but it can produce some false negatives. For example:
+All code underneath a `return`, `break`, or `continue` statement is assumed not to execute and will not be analyzed. This is not so much a "limitation" as it is an assumption, but it can produce some false negatives. For example:
 
 ```python
 import module
@@ -292,7 +282,7 @@ for x in foo():
 
 #### Decorators
 
-Ignored.
+Object flow is not tracked through user-defined decorators, and
 
 #### Single-Star Arguments
 
@@ -306,6 +296,20 @@ Assignments/Calls are ignored.
 
 Static/Class methods work fine. Object flow through instance methods are not tracked.
 
+#### Inheritance
+
+If you have:
+```python
+import module
+
+class MyClass(module.blah):
+  def __init__(self, input):
+    x = self.parent_func(input)
+    self.y = x + 10
+```
+
+Then `module.blah.parent_func` will not be captured. In other words, inheritance is ignored.
+
 ### Miscellaneous
 
-Code in `exec` statements is ignored. `globals` and `nonlocals` are ignored. Stars / unpacking.
+Code in `exec` statements is ignored. `globals` and `nonlocals` are ignored. Stars / unpacking. Built-in functions (zip, map, etc.).
