@@ -187,7 +187,7 @@ Our assumption applies to ternary expressions too. For example, the assignment `
 
 #### `try`/`except` blocks
 
-`try` blocks are assumed to always execute, and the `except` block is assumed not to execute. Like with `if`/`else` blocks, this assumption does not mean the `except` body is ignored. Object flow is still tracked inside the `except` block, but changes to the namespace do not persist outside the block.
+`try` blocks are assumed to always execute, without throwing an exception, and the `except` block is assumed not to execute. Like with `if`/`else` blocks, this assumption does not the `except` body is ignored. Object flow is still tracked inside the `except` block, but any changes made to the namespace within this block do not persist outside that scope.
 
 #### `return`, `break`, and `continue` statements
 
