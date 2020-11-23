@@ -173,25 +173,17 @@ But as of right now, `saplings` will only produce the tree on the right –– t
 
 We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in `if` blocks are the only changes assumed to persist into the parent scope, whereas changes in `elif` or `else` blocks do not persist. For example, consider the following:
 
-```python
-import numpy as np
+<p align="center">
+  <img width="75%" src="if_else.png" />
+</p>
 
-X = np.array([1, 2, 3])
+Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, `saplings` would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes, like so:
 
-if condition:
-  X = np.matrix([1, 2, 3])
-else:
-  print(X.mean())
-  X = None
+<p align="center">
+  <img width="50%" src="if_else_double_trees.png" />
+</p>
 
-print(X.sum())
-```
-
-Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of
-
-Notice that our assumption can produce false positives and negatives. If it turns out `condition` is `False` and the `else` block executes, then `attr1 -> fizzle` would be a false positive and the exclusion of `attr2 -> shizzle` would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when the `if` block executes and the other for when the `else` executes.
-
-Our assumption applies to ternary expressions too. For example, the assignment `var = module.foo() if condition else module.bar()` is, under our assumption, equivalent to `var = module.foo()`.
+Our assumption applies to ternary expressions too. For example, the assignment `a = b.c if condition else b.d` is, under our assumption, equivalent to `a = b.c`.
 
 #### `try`/`except` blocks
 
