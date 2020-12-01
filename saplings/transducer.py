@@ -34,6 +34,8 @@ class Saplings(ast.NodeVisitor):
         # and a flag for whether they've been evaluated in the current scope
         self._func_state_lookup_table = {}
 
+        self._class_metadata_lookup_table = {}
+
         # Holds FunctionDef nodes that were defined in a different scope but
         # called in the current scope
         self._called_but_undefined_funcs = set()
@@ -147,7 +149,7 @@ class Saplings(ast.NodeVisitor):
             arg_name_index = index + (num_args - num_defaults)
             arg_name = arg_names[arg_name_index]
 
-            default_node = self._process_sub_context(
+            default_node, _ = self._process_sub_context(
                 tree=ast.Module(body=[]),
                 namespace=namespace
             )._process_connected_tokens(default)
@@ -222,7 +224,7 @@ class Saplings(ast.NodeVisitor):
             else:
                 arg_name = arg_token.arg_name
 
-            arg_node = self._process_connected_tokens(arg_token.arg)
+            arg_node, _ = self._process_connected_tokens(arg_token.arg)
             if not arg_node:
                 if arg_name in func_namespace:
                     del func_namespace[arg_name]
@@ -240,7 +242,7 @@ class Saplings(ast.NodeVisitor):
             if node == func_def_node:
                 del func_namespace[alias]
 
-        func_saplings_obj = self._process_sub_context(
+        func_context = self._process_sub_context(
             ast.Module(body=func_def_node.body),
             func_namespace
         )
@@ -252,14 +254,14 @@ class Saplings(ast.NodeVisitor):
 
         # Handles closures by adding returned function to
         # _func_state_lookup_table
-        return_node = func_saplings_obj._return_node
+        return_node = func_context._return_node
         if isinstance(return_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             self._func_state_lookup_table[return_node] = {
-                **func_saplings_obj._func_state_lookup_table[return_node],
+                **func_context._func_state_lookup_table[return_node],
                 **{"called": False, "is_closure": True}
             }
 
-        return return_node
+        return return_node, func_context
 
     def _process_module(self, module, standard_import=False):
         """
@@ -326,7 +328,7 @@ class Saplings(ast.NodeVisitor):
 
         return term_node
 
-    def _delete_all_sub_aliases(self, targ_str):
+    def _delete_all_sub_aliases(self, targ_str, namespace):
         """
         If `my_var` is an alias, then `my_var()` and `my_var.attr` are
         considered sub-aliases. This function takes aliases that have been
@@ -338,10 +340,10 @@ class Saplings(ast.NodeVisitor):
             string representation of the target node in the assignment
         """
 
-        for alias in list(self._namespace.keys()):
+        for alias in list(namespace.keys()):
             for sub_alias_signifier in ('(', '.'):
                 if alias.startswith(targ_str + sub_alias_signifier):
-                    del self._namespace[alias]
+                    del namespace[alias]
                     break
 
     def _process_assignment(self, target, value):
@@ -364,29 +366,33 @@ class Saplings(ast.NodeVisitor):
         """
 
         tokenized_target = utils.recursively_tokenize_node(target, tokens=[])
-        targ_node = self._process_connected_tokens(tokenized_target)
+        targ_node, instance = self._process_connected_tokens(tokenized_target)
 
         tokenized_value = utils.recursively_tokenize_node(value, tokens=[])
-        val_node = self._process_connected_tokens(tokenized_value)
+        val_node, _ = self._process_connected_tokens(tokenized_value)
 
         # TODO (V2): Handle assignments to data structures. For an assignment
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
         # alias for bar().
 
-        targ_str = utils.stringify_tokenized_nodes(tokenized_target)
-        # val_str = utils.stringify_tokenized_nodes(tokenized_value)
+        if instance["node"]:
+            namespace = instance["node"].namespace
+            targ_str = utils.stringify_tokenized_nodes(tokenized_target[instance["index"] + 1:])
+        else:
+            namespace = self._namespace
+            targ_str = utils.stringify_tokenized_nodes(tokenized_target)
 
         # Type I: Known node reassigned to other known node (K2 = K1)
         if targ_node and val_node:
-            self._namespace[targ_str] = val_node
-            self._delete_all_sub_aliases(targ_str)
+            namespace[targ_str] = val_node
+            self._delete_all_sub_aliases(targ_str, namespace)
         # Type II: Known node reassigned to unknown node (K1 = U1)
         elif targ_node and not val_node:
-            del self._namespace[targ_str]
-            self._delete_all_sub_aliases(targ_str)
+            del namespace[targ_str]
+            self._delete_all_sub_aliases(targ_str, namespace)
         # Type III: Unknown node assigned to known node (U1 = K1)
         elif not targ_node and val_node:
-            self._namespace[targ_str] = val_node
+            namespace[targ_str] = val_node
             # TODO (V1): Handle all sub-aliases of val_node (i.e. if x = module.foo
             # and x.bar and y = x, then y.bar should be in the namespace)
 
@@ -452,7 +458,7 @@ class Saplings(ast.NodeVisitor):
             reference to the terminal node in the subtree
         """
 
-        # TODO (V1): Handle user-defined function calls from CLASSES
+        # TODO: Handle user-defined class method calls
 
         def handle_user_defined_func_call(func_def_node, token):
             adjusted_namespace = self._namespace.copy()
@@ -466,7 +472,7 @@ class Saplings(ast.NodeVisitor):
                         **func_state["namespace"]
                     }
 
-            return_node = self._process_user_defined_func(
+            return_node, _ = self._process_user_defined_func(
                 func_def_node,
                 adjusted_namespace,
                 token.args
@@ -475,10 +481,15 @@ class Saplings(ast.NodeVisitor):
             return return_node
 
         func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef)
-        node_stack, curr_func_def_node = [], None
+        curr_func_def_node, curr_class_def_node = None, None
+        curr_class_instance = {"node": None, "index": 0}
+        curr_node = None
         for index, token in enumerate(tokens):
+            curr_class_instance_node = curr_class_instance["node"]
+            curr_class_instance_index = curr_class_instance["index"]
+
             if isinstance(token, utils.ArgsToken):
-                if curr_func_def_node: # Evaluate call of user-defined function
+                if curr_func_def_node and not curr_class_instance_node: # Process call of user-defined function
                     return_node = handle_user_defined_func_call(
                         curr_func_def_node,
                         token
@@ -490,45 +501,135 @@ class Saplings(ast.NodeVisitor):
                         curr_func_def_node = None
 
                     if isinstance(return_node, utils.Node):
-                        node_stack.append(return_node)
+                        curr_node = return_node
 
                     continue
+                elif curr_func_def_node and curr_class_instance_node: # Process call of user-defined instance/class/static method
+                    # TODO: Handle method closures (i.e. instance method that returns another method)
+                    if hasattr(curr_func_def_node, "method_type"):
+                        method_type = curr_func_def_node.method_type
+
+                        if method_type == "static":
+                            adjusted_namespace = self._namespace.copy()
+                        elif method_type == "class":
+                            cls_arg = utils.ArgToken([utils.NameToken("cls")])
+                            token.args = [cls_arg] + token.args
+                            adjusted_namespace = {
+                                **self._namespace.copy(),
+                                **{"cls": curr_class_instance_node.class_def_node}
+                            }
+                        elif method_type == "instance":
+                            self_arg = utils.ArgToken([utils.NameToken("self")])
+                            token.args = [self_arg] + token.args
+                            adjusted_namespace = {
+                                **self._namespace.copy(),
+                                **{"self": curr_class_instance_node}
+                            }
+
+                        return_node, func_context = self._process_user_defined_func(
+                            curr_func_def_node,
+                            adjusted_namespace,
+                            token.args
+                        )
+                        # curr_class_instance_node.update_namespace(func_context._namespace)
+
+                        if isinstance(return_node, func_def_types):
+                            curr_func_def_node = return_node
+                        else:
+                            curr_func_def_node = None
+
+                        if isinstance(return_node, utils.Node):
+                            curr_node = return_node
+                        elif isinstance(return_node, ast.ClassDef):
+                            curr_class_def_node = return_node
+                        elif isinstance(return_node, utils.ClassInstance):
+                            curr_class_instance["node"] = return_node
+                            curr_class_instance["index"] = index
+
+                        continue
+                elif curr_class_def_node: # Process instantiation of user-defined class
+                    # TODO: Handle class closures? i.e. a function that returns a class? Class defined inside a class??
+
+                    class_metadata = self._class_metadata_lookup_table[curr_class_def_node]
+                    init_namespace = class_metadata["init_namespace"]
+
+                    instance = utils.ClassInstance(curr_class_def_node, init_namespace)
+                    if "__init__" in init_namespace:
+                        constructor = init_namespace["__init__"]
+                        # TODO: Pass in the ClassInstance as `self` in the arguments
+                        if isinstance(constructor, func_def_types):
+                            self_arg = utils.ArgToken([utils.NameToken("self")])
+                            token.args = [self_arg] + token.args
+
+                            _, func_context = self._process_user_defined_func(
+                                constructor,
+                                {**self._namespace.copy(), **{"self": instance}},
+                                token.args
+                            )
+                            # instance.update_namespace(func_context._namespace)
+
+                    class_metadata["instantiated"] = True
+                    curr_class_def_node = None
+                    curr_class_instance["node"] = instance
+                    curr_class_instance["index"] = index
+
+                    continue
+                elif curr_class_instance_node:
+                    if "__call__" in curr_class_instance_node.namespace:
+                        pass # TODO
                 else:
                     for arg_token in token:
-                        arg_node = self._process_connected_tokens(
+                        arg_node, _ = self._process_connected_tokens(
                             arg_token.arg,
                             increment_count
                         )
             elif not isinstance(token, utils.NameToken): # token is ast.AST node
                 self.visit(token) # TODO (V2): Handle lambdas
-                continue
+                continue # QUESTION: Or break?
 
+            # QUESTION: Break here? This is so function_def.attr isn't a thing
             if curr_func_def_node:
                 curr_func_def_node = None
 
-            token_sequence = tokens[:index + 1]
-            token_str = utils.stringify_tokenized_nodes(token_sequence)
+            if curr_class_instance_node:
+                namespace = curr_class_instance_node.namespace
+                token_sequence = tokens[curr_class_instance_index + 1:index + 1]
+            else:
+                namespace = self._namespace
+                token_sequence = tokens[:index + 1]
 
-            if token_str in self._namespace:
-                node = self._namespace[token_str]
+            # TODO: Handle class_instance.attr = ... assignments
+            # TODO: Handle class.attr = ... assignments (update init_namespace)
+
+            token_str = utils.stringify_tokenized_nodes(token_sequence)
+            if token_str in namespace:
+                node = namespace[token_str]
 
                 if isinstance(node, func_def_types):
                     curr_func_def_node = node
-                    continue
-
-                node_stack.append(node)
-            elif node_stack: # Base node exists –– create and append its child
+                elif isinstance(node, ast.ClassDef):
+                    curr_class_def_node = node
+                elif isinstance(node, utils.ClassInstance):
+                    curr_class_instance["node"] = node
+                    curr_class_instance["index"] = index
+                else:
+                    curr_node = node
+            elif curr_node: # Base node exists –– create and append its child
                 child_node = utils.Node(str(token))
-                node_stack[-1].add_child(child_node)
-                self._namespace[token_str] = child_node
-                node_stack.append(child_node)
+                curr_node.add_child(child_node)
+                namespace[token_str] = child_node
+                curr_node = child_node
 
         if curr_func_def_node:
-            return curr_func_def_node
-        elif not node_stack:
-            return None
+            return curr_func_def_node, curr_class_instance
+        elif curr_class_def_node:
+            return curr_class_def_node, curr_class_instance
+        elif curr_node:
+            return curr_node, curr_class_instance
+        elif curr_class_instance["node"]:
+            return curr_class_instance["node"], {"node": None, "index": 0}
 
-        return node_stack[-1]
+        return None, {"node": None, "index": 0} # Returns the terminal node and the ClassInstance it belongs to
 
     ## Aliasing Handlers ##
 
@@ -672,7 +773,7 @@ class Saplings(ast.NodeVisitor):
     def visit_Return(self, node):
         if node.value:
             tokenized_node = utils.recursively_tokenize_node(node.value, [])
-            self._return_node = self._process_connected_tokens(tokenized_node)
+            self._return_node, _ = self._process_connected_tokens(tokenized_node)
 
         self._stop_execution = True
 
@@ -701,23 +802,26 @@ class Saplings(ast.NodeVisitor):
 
             return targ_str
 
-        methods = {"static": [], "class": [], "instance": []}
-        static_variables = []
+        # Static methods can be called from instances and the class.
+        # Class methods can be called from instances and the class. (Although what’s passed in as cls is different for each).
+        # Instance methods can be called from class (but self has to be manually passed in) or from instance (self is automatically passed in).
+        # Regular methods can be called from instances (but the instance is automatically passed in as an argument, even if the first argument is not self) and classes.
+
+        methods, static_variables = [], []
         body_without_methods = []
         for n in node.body:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for decorator in n.decorator_list:
                     if decorator.id == "staticmethod":
-                        methods["static"].append(n)
+                        n.method_type = "static"
                         break
                     elif decorator.id == "classmethod":
-                        methods["class"].append(n)
+                        n.method_type = "class"
                         break
                 else:
-                    # TODO: Handle non-instance methods without decorators (i.e.
-                    # methods that just don't have `self` as an argument)
-                    methods["instance"].append(n)
+                    n.method_type = "instance"
 
+                methods.append(n)
                 continue
             elif isinstance(n, ast.Assign): # TODO: Handle AnnAssign and AugAssign
                 # BUG: Static variables can be defined without an assignment.
@@ -741,40 +845,36 @@ class Saplings(ast.NodeVisitor):
         )
         class_level_namespace = class_context._namespace
 
+        static_variable_map = {}
         for name, n in class_context._namespace.items():
             if name in static_variables:
                 self._namespace['.'.join((node.name, name))] = n
+                static_variable_map[name] = n
 
-        # Handles methods that are accessed by the enclosing class
-        for method in methods["static"] + methods["class"]:
-            adjusted_name = '.'.join((node.name, method.name))
+        method_map = {}
+        for method in methods:
+            method_name = method.name
+
+            # Handles methods that are accessed by the enclosing class
+            adjusted_name = '.'.join((node.name, method_name))
             method.name = adjusted_name
             self.visit_FunctionDef(method)
 
-        # NOTE: Static methods can be called from both the enclosing class and
-        # a class instance
+            method.name = method_name
+            method_map[method.name] = method
 
-        # Add classdefnode to class_state_lookup_table and figure out how to
-        # handle multiple class instances with different states and their
-        # functions being called
+        # init_namespace = {".".join(("self", name)): n for name, n in {**static_variable_map, **method_map}}
+        init_namespace = {**static_variable_map, **method_map}
+        self._class_metadata_lookup_table[node] = {
+            "instantiated": False,
+            "is_closure": False, # QUESTION: Does this make sense?
+            "init_namespace": init_namespace, # Everything here is an attribute of `self`
+        }
 
-        # If class is instantiated: process my_class.__init__() like a normal function call, except handle 'self'
-        # OR PROCESS my_class.__call__() if __call__ is overloaded
+        # NOTE: __init__ is what's called when a class is instantiated (e.g. my_class = Class())
+        # and __call__ is what's called when an instance of a class is called (e.g. my_class())
 
-
-        # class_state_lookup_table = {
-        # CLASSDEF:
-        #     "namespace": {}, # Store `self` bullshit here, and class variables
-        #     "called": False,
-        #     "aliases": set()
-        # }
-        #
-        # class_state_lookup_table = {
-        #     "FunctionDef": {
-        #         "namespace": {},
-        #         ""
-        #     }
-        # }
+        # TODO: Handle classes that are never used or class methods that are never called
 
     ## Control Flow Handlers ##
 
@@ -863,7 +963,7 @@ class Saplings(ast.NodeVisitor):
 
         if node.type:
             tokenized_exception = utils.recursively_tokenize_node(node.type, [])
-            exception_node = self._process_connected_tokens(tokenized_exception)
+            exception_node, _ = self._process_connected_tokens(tokenized_exception)
 
             if node.name: # except A as B
                 tokenized_alias = utils.recursively_tokenize_node(node.name, [])
@@ -939,9 +1039,9 @@ class Saplings(ast.NodeVisitor):
             iter_tokens = utils.recursively_tokenize_node(iter_node, [])
 
             if not index:
-                iter_tree_node = self._process_connected_tokens(iter_tokens)
+                iter_tree_node, _ = self._process_connected_tokens(iter_tokens)
             else:
-                iter_tree_node = self._process_sub_context(
+                iter_tree_node, _ = self._process_sub_context(
                     ast.Module(body=[]),
                     namespace
                 )._process_connected_tokens(iter_tokens)
