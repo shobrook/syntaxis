@@ -92,6 +92,19 @@ class Node(object):
         return default
 
 
+class ClassInstance(object):
+    def __init__(self, class_def_node, namespace):
+        self.class_def_node = class_def_node
+        self.namespace = namespace
+
+    def update_namespace(self, namespace_with_changes):
+        for name, node in namespace_with_changes.items():
+            # QUESTION: What about self()?
+            name_components = name.split(".")
+            if name_components[0] == "self":
+                self.namespace[".".join(name_components[1:])]
+
+
 #####################
 # TOKENIZER UTILITIES
 #####################
