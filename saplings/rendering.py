@@ -7,11 +7,6 @@ VERT_EDGE = "|"
 INDENT = "    "
 
 
-###########
-# RENDERING
-###########
-
-
 def render_tree(node, level=0):
     if not level:
         pre = ""
