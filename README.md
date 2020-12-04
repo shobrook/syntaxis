@@ -61,7 +61,7 @@ For more advanced usage of the `Saplings` object, read the docstring [here]().
 To pretty-print a tree, simply pass its root node into the `render_tree` generator, like so:
 
 ```python
-from saplings.utilities import render_tree
+from saplings.rendering import render_tree
 
 trees = my_saplings.get_trees()
 root_node = trees[0]
@@ -86,7 +86,7 @@ Here, `NC` means indicates a non-callable node and `C` a callable node. `-1`/`0`
 To create a dictionary representation of a tree, pass its root node into the `dictify_tree` function, like so:
 
 ```python
-from saplings.utilities import dictify_tree
+from saplings.rendering import dictify_tree
 
 dictify_tree(root_node)
 ```
