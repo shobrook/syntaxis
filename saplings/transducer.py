@@ -1,27 +1,113 @@
 # Standard Library
 import ast
-from collections import defaultdict, namedtuple
+from collections import defaultdict
 from copy import copy
 
 # Local
 from utilities import ObjectNode
 
 
-##############
-# HELPER NODES
-##############
+####################
+# NAMESPACE ENTITIES
+####################
 
 
-Function = namedtuple("Function", ["node", "namespace", "is_closure", "called"])
-Class = namedtuple("Class", ["node",])
-ClassInstance = namedtuple("ClassInstance", ["node", "namespace"])
+class ObjectNode(object):
+    def __init__(self, name, is_callable=False, order=0, children=[]):
+        """
+        Module tree node constructor. Each node represents a feature in a
+        package's API. A feature is defined as an object, function, or variable
+        that can only be used by importing the package.
+
+        @param id: original identifier for the node.
+        @param children: connected sub-nodes.
+        """
+
+        self.name = str(name)
+        self.is_callable = is_callable
+        self.order = order
+        self.children = []
+
+        self.count = 1
+
+        for child in children:
+            self.add_child(child)
+
+    def __repr__(self):
+        return self.name
+
+    def __str__(self):
+        return f"{self.name} ({'C' if self.is_callable else 'NC'}, {self.order})"
+
+    def __iter__(self):
+        return iter(self.children)
+
+    def __eq__(self, node):
+        if isinstance(node, type(self)):
+            return self.name == node.name
+
+        return False
+
+    def __ne__(self, node):
+        return not self.__eq__(node)
+
+    ## Instance Methods ##
+
+    def increment_count(self):
+        self.count += 1
+
+    def add_child(self, node):
+        for child in self.children:
+            if child == node: # Child already exists
+                child.increment_count()
+                return child
+
+        self.children.append(node)
+        return node
+
+    def depth_first(self):
+        yield self
+        for node in self:
+            yield from node.depth_first()
+
+    def breadth_first(self):
+        node_queue = [self]
+        while node_queue:
+            node = node_queue.pop(0)
+            yield node
+            for child in node.children:
+                node_queue.append(child)
 
 
-#####################
-# TOKENIZER UTILITIES
-#####################
+class Function(object):
+    def __init__(self, def_node, init_namespace, is_closure=False, called=False, method_type=None):
+        self.def_node = def_node
+        self.init_namespace = init_namespace
+        self.is_closure = is_closure
+        self.called = called
+        self.method_type = method_type
 
 
+class Class(object):
+    def __init__(self, def_node, init_namespace, is_closure=False, instantiated=False):
+        self.def_node = def_node
+        self.init_namespace = init_namespace
+        self.is_closure = is_closure
+        self.instantiated = instantiated
+
+
+class ClassInstance(object):
+    def __init__(self, class_entity, namespace):
+        self.class_entity = class_entity
+        self.namespace = namespace
+
+
+########
+# TOKENS
+########
+
+
+# TODO: Convert to namedtuples
 class NameToken(object):
     def __init__(self, name):
         self.name = name
@@ -47,6 +133,10 @@ class ArgsToken(object):
 
     def __repr__(self):
         return "()"
+
+######################
+# TOKENIZATION HELPERS
+######################
 
 
 BIN_OPS_TO_FUNCS = {
@@ -190,12 +280,12 @@ def stringify_tokenized_nodes(tokens):
     return stringified_tokens
 
 
-############
-# DECORATORS
-############
+###############
+# MISC. HELPERS
+###############
 
 
-def connected_construct_handler(func):
+def attribute_chain_handler(func):
     def wrapper(self, node):
         tokens = recursively_tokenize_node(node, [])
         self._process_connected_tokens(tokens)
@@ -203,13 +293,47 @@ def connected_construct_handler(func):
     return wrapper
 
 
+def delete_sub_aliases(targ_str, namespace):
+    """
+    If `my_var` is an alias, then `my_var()` and `my_var.attr` are
+    considered sub-aliases. This function takes aliases that have been
+    deleted or reassigned and deletes all of its sub-aliases.
+
+    Parameters
+    ----------
+    targ_str : string
+        string representation of the target node in the assignment
+    """
+
+    for alias in list(namespace.keys()):
+        for sub_alias_signifier in ('(', '.'):
+            if alias.startswith(targ_str + sub_alias_signifier):
+                del namespace[alias]
+                break
+
+
+def consolidate_call_nodes(node):
+    for index, child in enumerate(reversed(node.children.copy())):
+        if child.name == "()":
+            node.is_callable = True
+            for subchild in child.children:
+                subchild.order += 1
+                node.children.append(subchild)
+
+            node.children.pop(index)
+
+        consolidate_call_nodes(child)
+
+
+##########
+# SAPLINGS
+##########
+
+
 # QUESTION: Should frequency values be based on # of times evaluated, or # of
 # times a construct appears in the code?
-
-# Drop "user-defined" –– it's obviously user-defined
-
 class Saplings(ast.NodeVisitor):
-    def __init__(self, tree, hierarchies=[], namespace={}):
+    def __init__(self, tree, object_hierarchies=[], namespace={}):
         """
         Extracts object hierarchies for imported modules in a program, given its
         AST.
@@ -218,59 +342,60 @@ class Saplings(ast.NodeVisitor):
         ----------
         tree : ast.AST
             the AST representation of the program to be analyzed
-        hierarchies : {list, optional}
+        object_hierarchies : {list, optional}
             root nodes of existing object hierarchies
         namespace : {dict, optional}
-            mapping of identifiers to object/FunctionDef/ClassDef nodes
+            mapping of identifiers to ObjectNodes/Functions/Classes/ClassInstances
         """
 
-        # Maps identifiers to object hierarchy nodes, function definition nodes,
-        # and class definition nodes
+        self._object_hierarchies = object_hierarchies
+
+        # Maps active identifiers to ObjectNodes, Functions, Classes, and
+        # ClassInstances
         self._namespace = namespace
 
-        self._user_defined_functions = set()
-        self._user_defined_classes = set()
+        self._functions = set()
+        self._classes = set()
 
-        # Object hierarchy node (or FuncDef/ClassDef) corresponding to the first
+        # ObjectNode, Function, Class, or ClassInstance produced by the first
         # evaluated return statement in the AST
-        self._return_node = None
+        self._return_value = None
 
         # True when a Return, Continue, or Break node is hit –– stops traversal
         # of subtree
-        self._stop_execution = False
+        self._is_traversal_halted = False
 
-        # Holds root nodes of object hierarchy trees
-        self._hierarchies = hierarchies
-
-        # Traverses the AST
         self.visit(tree)
+        self._process_uncalled_functions()
 
-        # If a function is defined but never called, we process the function
-        # body after the traversal is over. The body is processed in the state
-        # of the namespace in which it was defined.
-        for function in self._user_defined_functions:
+    def _process_uncalled_functions(self):
+        """
+        Processes uncalled functions. If a function is defined but never called,
+        we process the function body after the traversal is over and in the
+        state of the namespace in which it was defined.
+        """
+
+        for function in self._functions:
             if function.called:
                 continue
 
-            # Skip to handle currying, as this function may be called in the
-            # parent scope
-            if self._return_node == function:
+            # Skip to handle closures, as this function may be called in a
+            # different scope
+            if self._return_value == function:
                 continue
 
-            self._process_user_defined_func(
-                func_def_node=function,
-                namespace=function.namespace
-            )
+            self._process_function(function, function.init_namespace)
 
     def visit(self, node):
         """
-        Visits a node iff self._stop_execution == False.
+        Overloaded AST visitor. Behaves the same as ast.NodeVisitor.visit except
+        it only traverses a subtree when self._is_traversal_halted == False.
         """
 
         method = "visit_" + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
 
-        if not self._stop_execution:
+        if not self._is_traversal_halted:
             return visitor(node)
 
     ## Helpers ##
@@ -293,7 +418,7 @@ class Saplings(ast.NodeVisitor):
         print("\tEntering child Saplings instance\n") # TEMP
         child_scope = Saplings(
             tree=tree,
-            hierarchies=self._hierarchies,
+            object_hierarchies=self._object_hierarchies,
             namespace=namespace
         )
         print("\tPopping out of Saplings instance\n") # TEMP
@@ -301,7 +426,75 @@ class Saplings(ast.NodeVisitor):
 
     ## Processors ##
 
-    def _process_arg_defaults(self, arg_names, defaults, namespace):
+    def _process_module(self, module, standard_import=False):
+        """
+        Takes a module and searches the d-tree forest for a matching root node.
+        If no match is found, new module nodes are generated and appended to the
+        forest.
+
+        Parameters
+        ----------
+        module : string
+            identifier for a module, sometimes a period-separated string of
+            sub-modules
+        standard_import : bool
+            flag for whether the module was imported normally or the result of
+            `from X import Y`
+
+        Returns
+        -------
+        ObjectNode
+            reference to the terminal d-tree node for the module
+        """
+
+        # TODO (V1): Check if you can refactor this function to use existing
+        # code
+
+        sub_modules = module.split('.')  # For module.submodule1.submodule2...
+        root_module = sub_modules[0]
+        term_node = None
+
+        def find_matching_node(subtree, name):
+            for node in subtree.breadth_first():
+                if node.name == name:
+                    return node
+
+            return None
+
+        for root in self._object_hierarchies:
+            matching_module = find_matching_node(root, root_module)
+
+            if matching_module:
+                term_node = matching_module
+                break
+
+        if not term_node:
+            root_node = ObjectNode(root_module, order=-1)
+            if standard_import:
+                self._namespace[root_module] = root_node
+
+            term_node = root_node
+            self._object_hierarchies.append(term_node)
+
+        for idx in range(len(sub_modules[1:])):
+            sub_module = sub_modules[idx + 1]
+            sub_module_alias = '.'.join([root_module] + sub_modules[1:idx + 2])
+
+            matching_sub_module = find_matching_node(term_node, sub_module)
+
+            if matching_sub_module:
+                term_node = matching_sub_module
+            else:
+                new_sub_module = ObjectNode(sub_module)
+                if standard_import:
+                    self._namespace[sub_module_alias] = new_sub_module
+
+                term_node.add_child(new_sub_module)
+                term_node = new_sub_module
+
+        return term_node
+
+    def _process_default_args(self, arg_names, defaults, namespace):
         """
         Takes arguments from a user-defined function's signature and processes
         their default values.
@@ -347,7 +540,7 @@ class Saplings(ast.NodeVisitor):
 
         return arg_to_default_node, null_defaults
 
-    def _process_user_defined_func(self, func_def_node, namespace, arg_vals=[]):
+    def _process_function(self, function, namespace, arguments=[]):
         """
         Processes the arguments and body of a user-defined function.
 
@@ -360,7 +553,7 @@ class Saplings(ast.NodeVisitor):
             AST node holding the signature and body of the function being called
         namespace : dict
             namespace in which the function was defined
-        arg_vals : list, optional
+        arguments : list, optional
             arguments passed into the function when called (list of ArgTokens)
 
         Returns
@@ -370,162 +563,82 @@ class Saplings(ast.NodeVisitor):
         """
 
         # TODO (V2): Handle single-star args
+        print([a.arg for a in arguments])
+        parameters = function.def_node.args
 
-        func_params = func_def_node.args
-
-        arg_names = [arg.arg for arg in func_params.args]
-        kwonlyarg_names = [arg.arg for arg in func_params.kwonlyargs]
+        arg_names = [a.arg for a in parameters.args]
+        kwonlyarg_names = [a.arg for a in parameters.kwonlyargs]
 
         # Object nodes corresponding to default values
-        default_nodes, null_defaults = self._process_arg_defaults(
-            arg_names=arg_names,
-            defaults=func_params.defaults,
-            namespace=namespace
+        default_nodes, null_defaults = self._process_default_args(
+            arg_names,
+            parameters.defaults,
+            namespace
         )
-        kw_default_nodes, null_kw_defaults = self._process_arg_defaults(
-            arg_names=kwonlyarg_names,
-            defaults=func_params.kw_defaults,
-            namespace=namespace
+        kw_default_nodes, null_kw_defaults = self._process_default_args(
+            kwonlyarg_names,
+            parameters.kw_defaults,
+            namespace
         )
 
-        # Consolidate arg names
-        if func_params.vararg:
-            arg_names.append(func_params.vararg.arg)
+        # Consolidates arg names
+        if parameters.vararg:
+            arg_names.append(parameters.vararg.arg)
         arg_names.extend(kwonlyarg_names)
-        if func_params.kwarg:
+        if parameters.kwarg:
             arg_names.append(func_params.kwarg.arg)
 
         # Update namespace with default values
-        func_namespace = {**namespace, **default_nodes, **kw_default_nodes}
+        namespace = {**namespace, **default_nodes, **kw_default_nodes}
         for null_arg_name in null_defaults + null_kw_defaults:
-            if null_arg_name in func_namespace:
-                del func_namespace[null_arg_name]
+            if null_arg_name in namespace:
+                del namespace[null_arg_name]
+                # TODO: Delete sub-aliases
 
         # Iterates through arguments in order they were passed into function
-        for index, arg_token in enumerate(arg_vals):
-            if not arg_token.arg_name:
+        for index, argument in enumerate(arguments):
+            if not argument.arg_name:
                 arg_name = arg_names[index]
             else:
-                arg_name = arg_token.arg_name
+                arg_name = argument.arg_name
 
-            arg_node, _ = self._process_connected_tokens(arg_token.arg)
+            arg_node, _ = self._process_connected_tokens(argument.arg)
             if not arg_node:
-                if arg_name in func_namespace:
-                    del func_namespace[arg_name] # <- this is the issue
-                    # TODO: Delete all sub-aliases
+                if arg_name in namespace:
+                    del namespace[arg_name]
+                    # TODO: Delete sub-aliases
 
                 continue
 
-            # TODO: Delete all sub-aliases first (yes this makes sense)
-            func_namespace[arg_name] = arg_node
+            # TODO: Delete sub-aliases first
+            namespace[arg_name] = arg_node
 
-        # TODO (V2): Simply create ast.Assign objects for each default argument
-        # and prepend them to func_def_node.body –– let the Saplings instance
-        # below do the rest. Not necessary but it would clean up your code.
+        # TODO (V1): Simply create ast.Assign objects for each default argument
+        # and prepend them to function.def_node.body –– let the Saplings instance
+        # below do the rest.
 
         # Handles recursive functions by deleting all names of the function node
-        for alias, node in list(func_namespace.items()):
-            if node == func_def_node:
-                del func_namespace[alias]
+        for name, node in list(namespace.items()):
+            if node == function:
+                del namespace[name]
 
-        func_context = self._process_sub_context(
-            ast.Module(body=func_def_node.body),
-            func_namespace
+        # Processes function body
+        func_saplings = Saplings(
+            ast.Module(body=function.def_node.body),
+            self._object_hierarchies,
+            namespace
         )
-        func_def_node.called = True
+        function.called = True
+        return_value = func_saplings._return_value
 
-        # Identifies closures and adds to list of _user_defined_functions if it
-        # hasn't been called yet
-        return_node = func_context._return_node
-        if isinstance(return_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return_node.is_closure = True
-            if not return_node.called:
-                self._user_defined_functions.add(return_node)
+        # If the function returns a closure then treat it like a function
+        # defined in the current scope by adding it to self._functions
+        if isinstance(return_value, Function):
+            return_value.is_closure = True
+            if not return_value.called:
+                self._functions.add(return_value)
 
-        return return_node, func_context
-
-    def _process_module(self, module, standard_import=False):
-        """
-        Takes a module and searches the d-tree forest for a matching root node.
-        If no match is found, new module nodes are generated and appended to the
-        forest.
-
-        Parameters
-        ----------
-        module : string
-            identifier for a module, sometimes a period-separated string of
-            sub-modules
-        standard_import : bool
-            flag for whether the module was imported normally or the result of
-            `from X import Y`
-
-        Returns
-        -------
-        ObjectNode
-            reference to the terminal d-tree node for the module
-        """
-
-        sub_modules = module.split('.')  # For module.submodule1.submodule2...
-        root_module = sub_modules[0]
-        term_node = None
-
-        def find_matching_node(subtree, id):
-            for node in subtree.breadth_first():
-                if node.id == id:
-                    return node
-
-            return None
-
-        for root in self._hierarchies:
-            matching_module = find_matching_node(root, root_module)
-
-            if matching_module:
-                term_node = matching_module
-                break
-
-        if not term_node:
-            root_node = ObjectNode(root_module)
-            if standard_import:
-                self._namespace[root_module] = root_node
-
-            term_node = root_node
-            self._hierarchies.append(term_node)
-
-        for idx in range(len(sub_modules[1:])):
-            sub_module = sub_modules[idx + 1]
-            sub_module_alias = '.'.join([root_module] + sub_modules[1:idx + 2])
-
-            matching_sub_module = find_matching_node(term_node, sub_module)
-
-            if matching_sub_module:
-                term_node = matching_sub_module
-            else:
-                new_sub_module = ObjectNode(sub_module)
-                if standard_import:
-                    self._namespace[sub_module_alias] = new_sub_module
-
-                term_node.add_child(new_sub_module)
-                term_node = new_sub_module
-
-        return term_node
-
-    def _delete_all_sub_aliases(self, targ_str, namespace):
-        """
-        If `my_var` is an alias, then `my_var()` and `my_var.attr` are
-        considered sub-aliases. This function takes aliases that have been
-        deleted or reassigned and deletes all of its sub-aliases.
-
-        Parameters
-        ----------
-        targ_str : string
-            string representation of the target node in the assignment
-        """
-
-        for alias in list(namespace.keys()):
-            for sub_alias_signifier in ('(', '.'):
-                if alias.startswith(targ_str + sub_alias_signifier):
-                    del namespace[alias]
-                    break
+        return return_value, func_saplings
 
     def _process_assignment(self, target, value):
         """
@@ -556,9 +669,9 @@ class Saplings(ast.NodeVisitor):
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
         # alias for bar().
 
-        if instance["node"]:
-            namespace = instance["node"].namespace
-            targ_str = stringify_tokenized_nodes(tokenized_target[instance["index"] + 1:])
+        if instance["entity"]:
+            namespace = instance["entity"].namespace
+            targ_str = stringify_tokenized_nodes(tokenized_target[instance["init_index"] + 1:])
             # TODO: I think you need to remove full targ_str from other namespace too
         else:
             namespace = self._namespace
@@ -567,11 +680,11 @@ class Saplings(ast.NodeVisitor):
         # Type I: Known node reassigned to other known node (K2 = K1)
         if targ_node and val_node:
             namespace[targ_str] = val_node
-            self._delete_all_sub_aliases(targ_str, namespace)
+            delete_sub_aliases(targ_str, namespace)
         # Type II: Known node reassigned to unknown node (K1 = U1)
         elif targ_node and not val_node:
             del namespace[targ_str]
-            self._delete_all_sub_aliases(targ_str, namespace)
+            delete_sub_aliases(targ_str, namespace)
         # Type III: Unknown node assigned to known node (U1 = K1)
         elif not targ_node and val_node:
             namespace[targ_str] = val_node
@@ -642,11 +755,11 @@ class Saplings(ast.NodeVisitor):
 
         # TODO: Handle user-defined class method calls
 
-        def handle_user_defined_func_call(func_def_node, token):
-            adjusted_namespace = self._namespace.copy()
+        def handle_function_call(function, token):
+            function_namespace = self._namespace.copy()
 
             # If not, then function was defined in the parent scope
-            if func_def_node in self._user_defined_functions:
+            if function in self._functions:
                 # TODO: What about:
                     # def foo():
                     #     def bar():
@@ -658,108 +771,107 @@ class Saplings(ast.NodeVisitor):
                     #     func()
                     #
                     # abc(foo())
-                if func_def_node.is_closure:
-                    adjusted_namespace = {
+                if function.is_closure:
+                    function_namespace = {
                         **self._namespace.copy(),
-                        **func_def_node.namespace
+                        **function.init_namespace
                     }
 
-            return_node, _ = self._process_user_defined_func(
-                func_def_node,
-                adjusted_namespace,
+            return_value, _ = self._process_function(
+                function,
+                function_namespace,
                 token.args
             ) # TODO (V1): Handle tuple returns
 
-            return return_node
+            return return_value
 
-        func_def_types = (ast.FunctionDef, ast.AsyncFunctionDef)
-        curr_func_def_node, curr_class_def_node = None, None
-        curr_class_instance = {"node": None, "index": 0}
-        curr_node = None
-        if isinstance(tokens, ast.NameConstant):
-            print(tokens.value)
+        current_entities = {
+            "object_node": None,
+            "function": None,
+            "class": None,
+            "class_instance": {"entity": None, "init_index": 0}
+        }
         for index, token in enumerate(tokens):
-            curr_class_instance_node = curr_class_instance["node"]
-            curr_class_instance_index = curr_class_instance["index"]
+            curr_class_instance = current_entities["class_instance"]["entity"]
+            curr_class_instance_init_index = current_entities["class_instance"]["init_index"]
 
             if isinstance(token, ArgsToken):
-                if curr_func_def_node and not curr_class_instance_node: # Process call of user-defined function
-                    return_node = handle_user_defined_func_call(
-                        curr_func_def_node,
+                if current_entities["function"] and not curr_class_instance: # Process call of user-defined function
+                    return_value = handle_function_call(
+                        current_entities["function"],
                         token
                     )
 
-                    if isinstance(return_node, func_def_types):
-                        curr_func_def_node = return_node
+                    if isinstance(return_value, Function):
+                        current_entities["function"] = return_value
                     else:
-                        curr_func_def_node = None
+                        current_entities["function"] = None
 
-                    if isinstance(return_node, ObjectNode):
-                        curr_node = return_node
+                    if isinstance(return_value, Class):
+                        current_entities["class"] = return_value
+                    elif isinstance(return_value, ClassInstance):
+                        current_entities["class_instance"]["entity"] = return_value
+                        current_entities["class_instance"]["init_index"] = index
+                    elif isinstance(return_value, ObjectNode):
+                        current_entities["object_node"] = return_value
 
                     continue
-                elif curr_func_def_node and curr_class_instance_node: # Process call of user-defined instance/class/static method
+                elif current_entities["function"] and curr_class_instance: # Process call of user-defined instance/class/static method
                     # TODO: Handle method closures (i.e. instance method that returns another method)
-                    if hasattr(curr_func_def_node, "method_type"):
-                        method_type = curr_func_def_node.method_type
+                    function_namespace = self._namespace.copy()
+                    method_type = current_entities["function"].method_type
 
-                        if method_type == "static":
-                            function_namespace = self._namespace.copy()
-                        elif method_type == "class":
-                            cls_arg = ArgToken([NameToken("")])
-                            token.args = [cls_arg] + token.args
-                            function_namespace = self._namespace.copy()
+                    hidden_arg = ArgToken([NameToken("")])
+                    if method_type != "static":
+                        token.args = [hidden_arg] + token.args
 
-                            self._namespace[""] = curr_class_instance_node.class_def_node
-                        elif method_type == "instance":
-                            self_arg = ArgToken([NameToken("")])
-                            token.args = [self_arg] + token.args
-                            function_namespace = self._namespace.copy()
+                    if method_type == "class":
+                        self._namespace[""] = curr_class_instance.class_entity
+                    elif method_type == "instance":
+                        self._namespace[""] = curr_class_instance
 
-                            self._namespace[""] = curr_class_instance_node
+                    return_value, _ = self._process_function(
+                        current_entities["function"],
+                        function_namespace,
+                        token.args
+                    )
 
-                        return_node, func_context = self._process_user_defined_func(
-                            curr_func_def_node,
-                            function_namespace,
-                            token.args
-                        )
+                    if "" in self._namespace:
+                        del self._namespace[""]
 
-                        if "" in self._namespace:
-                            del self._namespace[""]
+                    # TODO: Put into function (this is repeated code)
+                    if isinstance(return_value, Function):
+                        current_entities["function"] = return_value
+                    else:
+                        current_entities["function"] = None
 
-                        if isinstance(return_node, func_def_types):
-                            curr_func_def_node = return_node
-                        else:
-                            curr_func_def_node = None
+                    if isinstance(return_value, Class):
+                        current_entities["class"] = return_value
+                    elif isinstance(return_value, ClassInstance):
+                        current_entities["class_instance"]["entity"] = return_value
+                        current_entities["class_instance"]["init_index"] = index
+                    elif isinstance(return_value, ObjectNode):
+                        current_entities["object_node"] = return_value
 
-                        if isinstance(return_node, ObjectNode):
-                            curr_node = return_node
-                        elif isinstance(return_node, ast.ClassDef):
-                            curr_class_def_node = return_node
-                        elif isinstance(return_node, ClassInstance):
-                            curr_class_instance["node"] = return_node
-                            curr_class_instance["index"] = index
-
-                        continue
-                elif curr_class_def_node: # Process instantiation of user-defined class
+                    continue
+                elif current_entities["class"]: # Process instantiation of user-defined class
                     # TODO: Handle class closures? i.e. a function that returns a class? Class defined inside a class?? Recursive __init__?
 
-                    init_namespace = curr_class_def_node.init_namespace
-
+                    init_namespace = current_entities["class"].init_namespace
                     instance = ClassInstance(
-                        curr_class_def_node,
-                        init_namespace
+                        current_entities["class"],
+                        init_namespace.copy()
                     )
                     if "__init__" in init_namespace:
                         constructor = init_namespace["__init__"]
-                        if isinstance(constructor, func_def_types):
+                        if isinstance(constructor, Function):
                             self_arg = ArgToken([NameToken("")])
                             token.args = [self_arg] + token.args
                             function_namespace = self._namespace.copy()
 
                             self._namespace[""] = instance
 
-                            _, func_context = self._process_user_defined_func(
+                            _, func_context = self._process_function(
                                 constructor,
                                 function_namespace,
                                 token.args
@@ -767,14 +879,14 @@ class Saplings(ast.NodeVisitor):
 
                             del self._namespace[""]
 
-                    curr_class_def_node.instantiated = True
-                    curr_class_def_node = None
-                    curr_class_instance["node"] = instance
-                    curr_class_instance["index"] = index
+                    current_entities["class"].instantiated = True
+                    current_entities["class"] = None
+                    current_entities["class_instance"]["entity"] = instance
+                    current_entities["class_instance"]["init_index"] = index
 
                     continue
-                elif curr_class_instance_node:
-                    if "__call__" in curr_class_instance_node.namespace:
+                elif curr_class_instance:
+                    if "__call__" in curr_class_instance.namespace:
                         pass # TODO
                 else:
                     for arg_token in token:
@@ -783,49 +895,53 @@ class Saplings(ast.NodeVisitor):
                             increment_count
                         )
             elif not isinstance(token, NameToken): # token is ast.AST node
-                self.visit(token) # TODO (V2): Handle lambdas
+                self.visit(token) # TODO (V1): Handle lambdas
                 continue # QUESTION: Or break?
 
             # QUESTION: Break here? This is so function_def.attr isn't a thing
-            if curr_func_def_node:
-                curr_func_def_node = None
+            if current_entities["function"]:
+                current_entities["function"] = None
 
-            if curr_class_instance_node:
-                namespace = curr_class_instance_node.namespace
-                token_sequence = tokens[curr_class_instance_index + 1:index + 1]
+            if curr_class_instance:
+                namespace = curr_class_instance.namespace
+                token_seq = tokens[curr_class_instance_init_index + 1:index + 1]
             else:
                 namespace = self._namespace
-                token_sequence = tokens[:index + 1]
+                token_seq = tokens[:index + 1]
 
-            token_str = stringify_tokenized_nodes(token_sequence)
+            token_str = stringify_tokenized_nodes(token_seq)
             if token_str in namespace:
-                node = namespace[token_str]
+                entity = namespace[token_str]
 
-                if isinstance(node, func_def_types):
-                    curr_func_def_node = node
-                elif isinstance(node, ast.ClassDef):
-                    curr_class_def_node = node
-                elif isinstance(node, ClassInstance):
-                    curr_class_instance["node"] = node
-                    curr_class_instance["index"] = index
+                if isinstance(entity, Function):
+                    current_entities["function"] = entity
+                elif isinstance(entity, Class):
+                    current_entities["class"] = entity
+                elif isinstance(entity, ClassInstance):
+                    current_entities["class_instance"]["entity"] = entity
+                    current_entities["class_instance"]["init_index"] = index
                 else:
-                    curr_node = node
-            elif curr_node: # Base node exists –– create and append its child
+                    current_entities["object_node"] = entity
+            elif current_entities["object_node"]: # Base node exists –– create and append its child
                 child_node = ObjectNode(str(token))
-                curr_node.add_child(child_node)
+                current_entities["object_node"].add_child(child_node)
                 namespace[token_str] = child_node
-                curr_node = child_node
+                current_entities["object_node"] = child_node
 
-        if curr_func_def_node:
-            return curr_func_def_node, curr_class_instance
-        elif curr_class_def_node:
-            return curr_class_def_node, curr_class_instance
-        elif curr_node:
-            return curr_node, curr_class_instance
-        elif curr_class_instance["node"] and curr_class_instance["index"] == len(tokens) - 1:
-            return curr_class_instance["node"], {"node": None, "index": 0}
+        # QUESTION: Is it ever possible for current_entites["function"] and
+        # current_entites["class"] to both not be None? If not, then only keep
+        # track of one entity. Same with current_entities["object_node"].
 
-        return None, curr_class_instance
+        if current_entities["function"]:
+            return current_entities["function"], current_entities["class_instance"]
+        elif current_entities["class"]:
+            return current_entities["class"], current_entities["class_instance"]
+        elif current_entities["object_node"]:
+            return current_entities["object_node"], current_entities["class_instance"]
+        elif current_entities["class_instance"]["entity"] and current_entities["class_instance"]["init_index"] == len(tokens) - 1:
+            return current_entities["class_instance"]["entity"], {"entity": None, "init_index": 0}
+
+        return None, current_entities["class_instance"]
 
     ## Aliasing Handlers ##
 
@@ -859,7 +975,7 @@ class Saplings(ast.NodeVisitor):
             alias_id = alias.asname if alias.asname else alias.name
 
             for child in module_node.children:
-                if alias.name == child.id:
+                if alias.name == child.name:
                     child_exists = True
                     self._namespace[alias_id] = child
 
@@ -902,7 +1018,7 @@ class Saplings(ast.NodeVisitor):
             target_tokens = recursively_tokenize_node(target, [])
             target_str = stringify_tokenized_nodes(target_tokens)
 
-            self._delete_all_sub_aliases(target_str)
+            delete_sub_aliases(target_str, self._namespace)
 
     ## Function and Class Handlers ##
 
@@ -916,7 +1032,7 @@ class Saplings(ast.NodeVisitor):
         inputs. And if a user-defined function is never called, we process it at
         the end of the AST traversal and in the namespace it was defined in.
 
-        This processing is done by self._process_user_defined_func. All this
+        This processing is done by self._process_function. All this
         visitor does is alias the node (i.e. saves it to self._namespace)
         and adds it to the self._func_state_lookup_table, along with a copy of
         the namespace in the state the function is defined in.
@@ -936,12 +1052,14 @@ class Saplings(ast.NodeVisitor):
 
         # NOTE: namespace is only used if the function is never called or if its
         # a closure
-        node.namespace = self._namespace.copy()
-        node.called = False
-        node.is_closure = False
-
-        self._namespace[node.name] = node
-        self._user_defined_functions.add(node)
+        function = Function(
+            node,
+            self._namespace.copy(),
+            is_closure=False,
+            called=False
+        )
+        self._namespace[node.name] = function
+        self._functions.add(function)
 
     def visit_AsyncFunctionDef(self, node):
         self.visit_FunctionDef(node)
@@ -964,29 +1082,18 @@ class Saplings(ast.NodeVisitor):
 
         self._process_sub_context(node.body, namespace)
 
-        # TODO (V2): Handle assignments to lambdas and lambda function calls
+        # TODO (V1): Handle assignments to lambdas and lambda function calls
 
     def visit_Return(self, node):
         if node.value:
             tokenized_node = recursively_tokenize_node(node.value, [])
-            self._return_node, _ = self._process_connected_tokens(tokenized_node)
+            self._return_value, _ = self._process_connected_tokens(tokenized_node)
 
-        self._stop_execution = True
+        self._is_traversal_halted = True
 
     def visit_ClassDef(self, node):
         """
         """
-        # How are classes different from functions?
-        # You can do:
-            # my_class.my_static_method()
-            # my_class().my_instance_method()
-            # my_class.my_static_var
-            # my_class().my_instance_var
-        # When a class is instantiated (i.e. my_class()), this is equivalent to (my_class.__init__())
-        # The namespace for all instance methods changes when __init__ is called (since assignments to self is made)
-
-        self._namespace[node.name] = node
-        self._user_defined_classes.add(node)
 
         for base_node in node.bases: # TODO: Handle inheritance (?)
             self.visit(base_node)
@@ -1037,14 +1144,22 @@ class Saplings(ast.NodeVisitor):
 
             body_without_methods.append(n)
 
-        class_context = self._process_sub_context(
+        class_level_namespace = self._process_sub_context(
             tree=ast.Module(body=body_without_methods),
             namespace=self._namespace.copy()
+        )._namespace
+
+        class_entity = Class(
+            node,
+            {},
+            is_closure=False,
+            instantiated=False
         )
-        class_level_namespace = class_context._namespace
+        self._namespace[node.name] = class_entity
+        self._classes.add(class_entity)
 
         static_variable_map = {}
-        for name, n in class_context._namespace.items():
+        for name, n in class_level_namespace.items():
             if name in static_variables:
                 self._namespace['.'.join((node.name, name))] = n
                 static_variable_map[name] = n
@@ -1057,15 +1172,18 @@ class Saplings(ast.NodeVisitor):
             adjusted_name = '.'.join((node.name, method_name))
             method.name = adjusted_name
             self.visit_FunctionDef(method)
-
             method.name = method_name
-            method_map[method.name] = method
 
-        node.instantiated = False
-        node.is_closure = False # QUESTION: Does this make sense?
-        node.init_namespace = {**static_variable_map, **method_map} # Everything here is an attribute of `self`
+            method_map[method_name] = Function(
+                method,
+                self._namespace.copy(),
+                is_closure=False,
+                called=False,
+                method_type=method.method_type
+            )
 
-        # TODO: Handle classes that are never used or class methods that are never called
+        # Everything here is an attribute of `self`
+        class_entity.init_namespace = {**static_variable_map, **method_map}
 
     ## Control Flow Handlers ##
 
@@ -1118,11 +1236,11 @@ class Saplings(ast.NodeVisitor):
         )
         self.visit(ast.Module(body=[target_assignment] + node.body))
 
-        if not self._stop_execution:
+        if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
-        if not self._return_node:
-            self._stop_execution = False
+        if not self._return_value: # TODO: Explain this in a comment
+            self._is_traversal_halted = False
 
     def visit_AsyncFor(self, node):
         self.visit_For(node)
@@ -1130,11 +1248,11 @@ class Saplings(ast.NodeVisitor):
     def visit_While(self, node):
         self.visit(ast.Module(body=node.body))
 
-        if not self._stop_execution:
+        if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
-        if not self._return_node:
-            self._stop_execution = False
+        if not self._return_value: # QUESTION: Hmm?
+            self._is_traversal_halted = False
 
     def visit_Try(self, node):
         for except_handler_node in node.handlers:
@@ -1178,34 +1296,34 @@ class Saplings(ast.NodeVisitor):
         self.visit(assign_node)
 
     def visit_Continue(self, node):
-        self._stop_execution = True
+        self._is_traversal_halted = True
 
     def visit_Break(self, node):
-        self._stop_execution = True
+        self._is_traversal_halted = True
 
-    ## Construct Handlers ##
+    ## Core Handlers ##
 
-    @connected_construct_handler
+    @attribute_chain_handler
     def visit_Name(self, node):
         pass
 
-    @connected_construct_handler
+    @attribute_chain_handler
     def visit_Attribute(self, node):
         pass
 
-    @connected_construct_handler
+    @attribute_chain_handler
     def visit_Call(self, node):
         pass
 
-    @connected_construct_handler
+    @attribute_chain_handler
     def visit_Subscript(self, node):
         pass
 
-    @connected_construct_handler
+    @attribute_chain_handler
     def visit_BinOp(self, node):
         pass
 
-    @connected_construct_handler
+    @attribute_chain_handler
     def visit_Compare(self, node):
         pass
 
@@ -1269,14 +1387,10 @@ class Saplings(ast.NodeVisitor):
 
     ## Public Methods ##
 
-    def _consolidate_call_nodes(self, node):
-        while node_queue:
-            first_node = node_queue.pop(0)
-            yield first_node
-            for child in first_node.children:
-                node_queue.append(child)
-
     def get_trees(self):
-        for root_node in self._hierarchies:
-            self._consolidate_call_nodes(root_node)
-            yield root_node
+        trees = []
+        for root_node in self._object_hierarchies:
+            consolidate_call_nodes(root_node)
+            trees.append(root_node)
+
+        return trees
