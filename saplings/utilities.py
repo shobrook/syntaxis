@@ -2,15 +2,15 @@
 import ast
 from collections import defaultdict
 
+HORIZ_EDGE = "+--"
+VERT_EDGE = "|"
+INDENT = "    "
+
 
 ###########
 # RENDERING
 ###########
 
-
-HORIZ_EDGE = "+--"
-VERT_EDGE = "|"
-INDENT = "    "
 
 def render_tree(node, level=0):
     if not level:
@@ -39,90 +39,13 @@ def render_tree(node, level=0):
     return tree_repr
 
 
-######################
-# TREE/GRAPH UTILITIES
-######################
+def dictify_tree(node):
+    d = {node.name: {
+        "is_callable": node.is_callable,
+        "order": node.order,
+        "children": []
+    }}
+    for child in node.children:
+        d[node.name]["children"].append(dictify_tree(child))
 
-
-class ObjectNode(object):
-    def __init__(self, id, children=[]):
-        """
-        Module tree node constructor. Each node represents a feature in a
-        package's API. A feature is defined as an object, function, or variable
-        that can only be used by importing the package.
-
-        @param id: original identifier for the node.
-        @param children: connected sub-nodes.
-        """
-
-        self.id = str(id)
-        self.children = []
-        self.count = 1
-
-        for child in children:
-            self.add_child(child)
-
-    def __repr__(self):
-        return self.id
-
-    def __iter__(self):
-        return iter(self.children)
-
-    def __eq__(self, node):
-        if isinstance(node, type(self)):
-            return self.id == node.id
-
-        return False
-
-    def __ne__(self, node):
-        return not self.__eq__(node)
-
-    ## Instance Methods ##
-
-    def increment_count(self):
-        self.count += 1
-
-    def add_child(self, node):
-        for child in self.children:
-            if child == node: # Child already exists
-                child.increment_count()
-                return child
-
-        self.children.append(node)
-        return node
-
-    def depth_first(self):
-        yield self
-        for node in self:
-            yield from node.depth_first()
-
-    def breadth_first(self):
-        node_queue = [self]
-        while node_queue:
-            node = node_queue.pop(0)
-            yield node
-            for child in node.children:
-                node_queue.append(child)
-
-    def paths(self):
-        if not self.children:
-            return [[self.id]]
-
-        paths = []
-        for child in self.children:
-            for path in child.paths():
-                paths.append([self.id] + path)
-
-        return paths
-
-    def to_dict(self, debug=False):
-        default = {
-            "id": self.id,
-            "count": self.count
-        }
-
-        children = [child.to_dict(debug) for child in self.children]
-        if children:
-            return {**default, **{"children": children}}
-
-        return default
+    return d
