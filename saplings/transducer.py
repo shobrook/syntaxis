@@ -1,10 +1,6 @@
 # Standard Library
 import ast
 from collections import defaultdict
-from copy import copy
-
-# Local
-from utilities import ObjectNode
 
 
 ####################
