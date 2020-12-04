@@ -3,7 +3,7 @@
   <br />
 </h1>
 
-`saplings` is a static analysis tool for Python. Given a program, `saplings` will build object hierarchies for every module imported in the program. These are dependency trees where the root node represents a module and each child represents a descendant attribute of that module. Object hierarchies are useful for making inferences about a module's API, mining patterns in how a module is used, and [duck typing](https://en.wikipedia.org/wiki/Duck_typing).
+`saplings` is a static analysis tool for Python. Given a program, `saplings` will build object hierarchies for every module imported in the program. Object hierarchies are dependency trees where the root node represents a module and each child represents an attribute of its parent. These can be useful for making inferences about a module's API, mining patterns in how a module is used, and [duck typing](https://en.wikipedia.org/wiki/Duck_typing).
 
 <img src="./demo.gif" />
 
@@ -31,7 +31,7 @@ $ pip install saplings
 
 ## Usage
 
-Using `saplings` takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) –– you'll need to import the `ast` module for this. Then, import the `Saplings` object and initialize it with the root node of the AST.
+Using `saplings` takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) using the `ast` module. Then, import the `Saplings` object and initialize it with the root node of the AST.
 
 ```python
 import ast
@@ -42,10 +42,10 @@ program_ast = ast.parse(my_program)
 my_saplings = Saplings(program_ast)
 ```
 
-That's it. To access the object hierarchies, use the `trees` attribute of your `Saplings` object, like so:
+That's it. To access the object hierarchies, simply call the `get_trees` method in your `Saplings` object, like so:
 
 ```python
-my_saplings.trees # => [ObjectNode(), ObjectNode(), ..., ObjectNode()]
+my_saplings.get_trees() # => [ObjectNode(), ObjectNode(), ..., ObjectNode()]
 ```
 
 For more advanced usage of the `Saplings` object, read the docstring [here]().
@@ -58,12 +58,14 @@ For more advanced usage of the `Saplings` object, read the docstring [here]().
 * **`order` _(int)_:** Indicates the type of connection to the parent node (e.g. `0` is an attribute of the parent, `1` is an attribute of the output of the parent when called, etc.); `-1` if node is root
 * **`children` _(list)_:** List of child nodes
 
-To pretty-print a tree, simply pass its root node into the `render_tree` iterator, like so:
+To pretty-print a tree, simply pass its root node into the `render_tree` generator, like so:
 
 ```python
 from saplings.utilities import render_tree
 
-for branches, node in render_tree(my_saplings.trees[0]):
+trees = my_saplings.get_trees()
+root_node = trees[0]
+for branches, node in render_tree(root_node):
   print(f"{branches}{node}")
 ```
 ```
@@ -79,14 +81,14 @@ numpy (NC, -1)
      +-- T (NC, 1)
 ```
 
-Here, `NC` means indicates a non-callable node and `C` indicates a callable node. `0` and `1` indicate the order of the node's connection to its parent.
+Here, `NC` means indicates a non-callable node and `C` a callable node. `-1`/`0`/`1` indicate the order of the node's connection to its parent.
 
-To create a dictionary representation of a tree or multiple trees, pass the root nodes into the `dictify_trees` function, like so:
+To create a dictionary representation of a tree, pass its root node into the `dictify_tree` function, like so:
 
 ```python
-from saplings.utilities import dictify_trees
+from saplings.utilities import dictify_tree
 
-forest_dict = dictify_trees(my_saplings.trees)
+dictify_tree(root_node)
 ```
 ```python
 {
@@ -102,7 +104,7 @@ forest_dict = dictify_trees(my_saplings.trees)
 }
 ```
 
-### Understanding the Object Hierarchy
+### Interpreting the Object Hierarchy
 
 Each node is an _object_ and an object can either be _callable_ (i.e. has `__call__` defined) or _non-callable_. Connections between nodes each have an _order_ –– a number which describes the relationship between a node and its parent. If a node is a 0th-order child of its parent object, then it's an attribute of that object. If it's a 1st-order child, then it's an attribute of the output of the parent object when it's called. For example:
 
@@ -191,18 +193,18 @@ Our assumption applies to ternary expressions too. For example, the assignment `
 
 #### `return`, `break`, and `continue` statements
 
-All code underneath a `return`, `break`, or `continue` statement is assumed not to execute and will not be analyzed. This is not so much a "limitation" as it is an assumption, but it can produce some false negatives. For example:
+All code underneath a `return`, `break`, or `continue` statement is assumed not to execute and will not be analyzed. This is not so much a "limitation" as it is an assumption, but it can produce some false negatives. For example, consider this:
 
 ```python
-import module
+import numpy as np
 
 for x in range(10):
-  y = module.foo
+  y = np.array([x])
   continue
-  y.bar()
+  y.mean()
 ```
 
-It may be the case that `bar` is an attribute of `module.foo`, but saplings will not capture this since `y.bar()` would never be executed, and therefore we cannot be sure it's a valid usage of the module.
+It may be the case that `mean` is an attribute of `np.array`, but saplings will not capture this since `y.mean()` would never be executed.
 
 ### Functions
 
@@ -286,7 +288,11 @@ Assignments/Calls are ignored.
 
 ### Classes
 
-Static/Class methods work fine. Object flow through instance methods are not tracked.
+Saplings can keep track of the state of each instance of a user-defined class. It also understands the difference between class, static, and instance methods. For example:
+
+```python
+
+```
 
 #### Inheritance
 
@@ -301,6 +307,9 @@ class MyClass(module.blah):
 ```
 
 Then `module.blah.parent_func` will not be captured. In other words, inheritance is ignored.
+TODO: Handle super()
+
+#### Metaclasses
 
 ### Miscellaneous
 
