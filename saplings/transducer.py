@@ -39,7 +39,7 @@ class ObjectNode(object):
     def __iter__(self):
         return iter(self.children)
 
-    def __eq__(self, node):
+    def __eq__(self, node): # TODO (V1): Improve this
         if isinstance(node, type(self)):
             return self.name == node.name
 
@@ -190,8 +190,6 @@ def recursively_tokenize_node(node, tokens):
     Each token in this list is a child of the previous token. The "base" token
     are NameTokens. These are object references.
     """
-
-    # TODO (V2): Handle ast.Starred
 
     if isinstance(node, ast.Name):
         tokens.append(NameToken(node.id))
@@ -371,17 +369,18 @@ class Saplings(ast.NodeVisitor):
         state of the namespace in which it was defined.
         """
 
-        for function in self._functions:
-            if function.called:
-                continue
+        # Don't process closures, as they may be called in a different scope
+        returns_closure = isinstance(self._return_value, Function)
+        if returns_closure and self._return_value in self._functions:
+            self._functions.remove(self._return_value)
 
-            # Skip to handle closures, as this function may be called in a
-            # different scope
-            if self._return_value == function:
-                continue
+        while any(not f.called for f in self._functions):
+            for function in self._functions.copy():
+                if function.called:
+                    self._functions.remove(function)
+                    continue
 
-            print(function.def_node.name)
-            self._process_function(function, function.init_namespace)
+                self._process_function(function, function.init_namespace)
 
     def visit(self, node):
         """
@@ -530,27 +529,43 @@ class Saplings(ast.NodeVisitor):
 
     def _process_function(self, function, namespace, arguments=[]):
         """
-        Processes the arguments and body of a user-defined function.
-
-        Note: If the function is recursive, the recursive calls are not
-        processed (otherwise this would throw Saplings into an infinite loop).
+        Processes the arguments and body of a user-defined function. If the
+        function is recursive, the recursive calls are not processed (otherwise
+        this would throw `Saplings` into an infinite loop). If the function
+        returns a closure, that function is added to the list of functions in
+        the current scope.
 
         Parameters
         ----------
-        func_def_node : ast.FunctionDef
-            AST node holding the signature and body of the function being called
+        function : Function
+            function that's being called
         namespace : dict
-            namespace in which the function was defined
+            namespace within which the function should be processed
         arguments : list, optional
-            arguments passed into the function when called (list of ArgTokens)
+            arguments passed into the function when called (as a list of
+            ArgTokens)
 
         Returns
         -------
-        {ObjectNode, ast.FunctionDef, ast.AsyncFunctionDef, None}
-            d-tree node corresponding to the return value of the function
+        {ObjectNode, Function, Class, ClassInstance, None}
+            namespace entity corresponding to the return value of the function;
+            None if the function has no return value or returns something we
+            don't care about (i.e. something that isn't tracked in the
+            namespace)
         """
 
         # TODO (V1): Handle single-star args
+
+        # Starred nodes can now appear in args, and kwargs is replaced by keyword
+        # nodes in keywords for which arg is None.
+
+
+        # args, posonlyargs and kwonlyargs are lists of arg nodes.
+        # vararg and kwarg are single arg nodes, referring to the *args, **kwargs parameters.
+        # kw_defaults is a list of default values for keyword-only arguments. If one is None, the corresponding argument is required.
+        # defaults is a list of default values for arguments that can be passed positionally. If there are fewer defaults, they correspond to the last n arguments.
+
+        # TODO: Check if arguments is empty to skip all this BS
 
         parameters = function.def_node.args
 
@@ -574,7 +589,7 @@ class Saplings(ast.NodeVisitor):
             arg_names.append(parameters.vararg.arg)
         arg_names.extend(kwonlyarg_names)
         if parameters.kwarg:
-            arg_names.append(func_params.kwarg.arg)
+            arg_names.append(parameters.kwarg.arg)
 
         # Update namespace with default values
         namespace = {**namespace, **default_nodes, **kw_default_nodes}
@@ -623,8 +638,6 @@ class Saplings(ast.NodeVisitor):
         if isinstance(return_value, Function):
             return_value.is_closure = True
             if not return_value.called:
-                # TODO: If _process_function is being called inside _process_uncalled_functions,
-                # then don't do this
                 self._functions.add(return_value)
 
         return return_value, func_saplings
@@ -751,30 +764,18 @@ class Saplings(ast.NodeVisitor):
         def handle_function_call(function, token, index):
             function_namespace = self._namespace.copy()
 
-            # If not, then function was defined in the parent scope
-            if function in self._functions:
-                # TODO (V1): What about:
-                    # def foo():
-                    #     def bar():
-                    #         return 10
-                    #
-                    #     return bar
-                    #
-                    # def abc(func):
-                    #     func()
-                    #
-                    # abc(foo())
-                if function.is_closure:
-                    function_namespace = {
-                        **self._namespace.copy(),
-                        **function.init_namespace
-                    }
+            # TODO (V1): Check if this causes problems and move into _process_function
+            if function.is_closure:
+                function_namespace = {
+                    **self._namespace.copy(),
+                    **function.init_namespace
+                }
 
             return_value, _ = self._process_function(
                 function,
                 function_namespace,
                 token.args
-            ) # TODO (V1): Handle tuple returns
+            ) # TODO (V2): Handle tuple returns
 
             if isinstance(return_value, Function):
                 current_entities["function"] = return_value
@@ -828,7 +829,7 @@ class Saplings(ast.NodeVisitor):
 
                     continue
                 elif current_entities["class"]: # Process instantiation of user-defined class
-                    # TODO: Handle class closures? i.e. a function that returns a class? Class defined inside a class?? Recursive __init__?
+                    # TODO (V1): Handle class closures? i.e. a function that returns a class? Class defined inside a class?? Recursive __init__?
 
                     init_namespace = current_entities["class"].init_namespace
                     instance = ClassInstance(
@@ -860,7 +861,7 @@ class Saplings(ast.NodeVisitor):
                     continue
                 elif curr_class_instance:
                     if "__call__" in curr_class_instance.namespace:
-                        pass # TODO
+                        pass # TODO (V1)
                 else:
                     for arg_token in token:
                         arg_node, _ = self._process_connected_tokens(
@@ -1069,7 +1070,7 @@ class Saplings(ast.NodeVisitor):
         """
         """
 
-        for base_node in node.bases: # TODO: Handle inheritance (?)
+        for base_node in node.bases: # TODO (V2): Handle inheritance (?)
             self.visit(base_node)
 
         # TODO (V2): Handle metaclasses
@@ -1102,7 +1103,7 @@ class Saplings(ast.NodeVisitor):
 
                 methods.append(n)
                 continue
-            elif isinstance(n, ast.Assign): # TODO: Handle AnnAssign and AugAssign
+            elif isinstance(n, ast.Assign): # TODO (V1): Handle AnnAssign and AugAssign
                 # BUG: Static variables can be defined without an assignment.
                 # For example:
                     # class foo(object):
@@ -1208,7 +1209,7 @@ class Saplings(ast.NodeVisitor):
         if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
-        if not self._return_value: # TODO: Explain this in a comment
+        if not self._return_value: # TODO (V1): Explain this in a comment
             self._is_traversal_halted = False
 
     def visit_AsyncFor(self, node):
