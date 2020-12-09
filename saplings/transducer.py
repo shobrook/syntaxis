@@ -56,7 +56,7 @@ class ObjectNode(object):
     def add_child(self, node):
         for child in self.children:
             if child == node: # Child already exists
-                child.increment_count()
+                # child.increment_count()
                 return child
 
         self.children.append(node)
@@ -86,11 +86,10 @@ class Function(object):
 
 
 class Class(object):
-    def __init__(self, def_node, init_namespace, is_closure=False, instantiated=False):
+    def __init__(self, def_node, init_namespace, is_closure=False):
         self.def_node = def_node
         self.init_namespace = init_namespace
         self.is_closure = is_closure
-        self.instantiated = instantiated
 
 
 class ClassInstance(object):
@@ -345,8 +344,8 @@ class Saplings(ast.NodeVisitor):
         # ClassInstances
         self._namespace = namespace
 
+        # Keeps track of functions defined in the current scope
         self._functions = set()
-        self._classes = set() # QUESTION: Necessary?
 
         # ObjectNode, Function, Class, or ClassInstance produced by the first
         # evaluated return statement in the AST
@@ -736,22 +735,17 @@ class Saplings(ast.NodeVisitor):
         {ObjectNode, Function, Class, ClassInstance}, context_dict
         """
 
-        def break_attribute_chain():
-            pass
+        def break_and_process_nested_chains(tokens, current_entity, current_instance):
+            for token in tokens:
+                if not isinstance(token, CallToken):
+                    continue
 
-        def update_current_entities(current_entities, entity, index):
-            if isinstance(entity, Function):
-                current_entities["function"] = entity
-            else:
-                current_entities["function"] = None
+                for arg_token in token:
+                    self._process_attribute_chain(arg_token.arg_val)
 
-            if isinstance(entity, Class):
-                current_entities["class"] = entity
-            elif isinstance(entity, ClassInstance):
-                current_entities["class_instance"]["entity"] = entity
-                current_entities["class_instance"]["init_index"] = index
-            elif isinstance(entity, ObjectNode):
-                current_entities["object_node"] = entity
+            current_entity = None
+            current_instance["entity"] = None
+            current_instance["init_index"] = 0
 
         def process_function_call(function, arguments):
             if function.is_closure:
@@ -787,129 +781,142 @@ class Saplings(ast.NodeVisitor):
 
             return return_value
 
-        current_entities = {
-            "object_node": None,
-            "function": None,
-            "class": None,
-            "class_instance": {"entity": None, "init_index": 0}
-        }
+        current_entity = None
+        current_instance = {"entity": None, "init_index": 0}
         for index, token in enumerate(attribute_chain):
-            curr_class_instance = current_entities["class_instance"]["entity"]
-            curr_class_instance_init_index = current_entities["class_instance"]["init_index"]
+            if index and not current_entity:
+                break_and_process_nested_chains(
+                    attribute_chain[index:],
+                    current_entity,
+                    current_instance
+                )
+                break
 
             if isinstance(token, CallToken):
-                if current_entities["function"] and not curr_class_instance:
-                    # Process call of user-defined function
-                    return_value = process_function_call(
-                        current_entities["function"],
-                        token.args
-                    )
-                    update_current_entities(
-                        current_entities,
-                        return_value,
-                        index
-                    )
+                if isinstance(current_entity, Function):
+                    if current_instance["entity"]:
+                        # Process call of function from instance of a
+                        # user-defined class
+                        current_entity = process_method_call(
+                            current_entity,
+                            current_instance["entity"],
+                            token.args
+                        )
+                    else:
+                        # Process call of user-defined function
+                        current_entity = process_function_call(
+                            current_entity,
+                            token.args
+                        )
+
+                    if isinstance(current_entity, ClassInstance):
+                        current_instance["entity"] = current_entity
+                        current_instance["init_index"] = index
+
                     continue
-                elif current_entities["function"] and curr_class_instance:
-                    # Process call of user-defined instance/class/static method
-                    return_value = process_method_call(
-                        current_entities["function"],
-                        curr_class_instance,
-                        token.args
-                    )
-                    update_current_entities(
-                        current_entities,
-                        return_value,
-                        index
-                    )
-                    continue
-                elif current_entities["class"]:
+                elif isinstance(current_entity, Class):
                     # Process instantiation of user-defined class
 
                     # TODO (V1): Handle class closures? i.e. a function that returns a class? Class defined inside a class?? Recursive __init__?
 
-                    curr_class = current_entities["class"]
-                    init_namespace = curr_class.init_namespace
-                    instance = ClassInstance(curr_class, init_namespace.copy())
+                    init_namespace = current_entity.init_namespace
+                    class_instance = ClassInstance(
+                        current_entity,
+                        init_namespace.copy()
+                    )
 
                     if "__init__" in init_namespace:
                         constructor = init_namespace["__init__"]
                         if isinstance(constructor, Function):
                             process_method_call(
                                 constructor,
-                                instance,
+                                class_instance,
                                 token.args
                             )
                         else:
-                            pass # TODO (V1): If __init__ is not callable,
-                                 # class cannot be instantiated –– handle this
+                            # If __init__ is not callable, class cannot be
+                            # instantiated
+                            break_and_process_nested_chains(
+                                attribute_chain[index + 1:],
+                                current_entity,
+                                current_instance
+                            )
+                            break
 
-                    curr_class.instantiated = True # QUESTION: Do we even need to know if classes are instantiated or not? Should we even keep track of classes in self._classes?
-                    current_entities["class"] = None
-
-                    update_current_entities(current_entities, instance, index)
-                    continue
-                elif curr_class_instance:
-                    if "__call__" in curr_class_instance.namespace:
-                        pass
+                            # BUG: __init__ may be a lambda function or an
+                            # ObjectNode (e.g. __init__ = module.imported_init)
                     else:
-                        pass # TODO (V1): Iterate through the rest of the tokens
-                             # and only process the contents of ArgTokens;
-                             # ignore the rest
+                        # BUG: If __init__ is defined in the base class then
+                        # it's a black box and may make unknown changes to the
+                        # instance namespace
+                        pass
+
+                    current_entity = class_instance
+                    current_instance["entity"] = class_instance
+                    current_instance["init_index"] = index
+
+                    continue
+                elif isinstance(current_entity, ClassInstance):
+                    # Process call of instance of user-defined class
+                    if "__call__" in current_entity.namespace:
+                        call_entity = current_entity.namespace["__call__"]
+
+                        # BUG: __call__ may be a lambda function or an
+                        # ObjectNode (e.g. __call__ = module.imported_call)
+                        if isinstance(call_entity, Function):
+                            current_entity = process_method_call(
+                                call_entity,
+                                current_entity,
+                                token.args
+                            )
+
+                            if isinstance(current_entity, ClassInstance):
+                                current_instance["entity"] = current_entity
+                                current_instance["init_index"] = index
+
+                            continue
+
+                    break_and_process_nested_chains(
+                        attribute_chain[index + 1:],
+                        current_entity,
+                        current_instance
+                    )
+                    break
+
+                    # BUG: If __call__ is defined in the base class then
+                    # breaking could produce false negatives
                 else:
                     for arg_token in token:
-                        arg_node, _ = self._process_attribute_chain(
-                            arg_token.arg_val
-                        )
+                        self._process_attribute_chain(arg_token.arg_val)
             elif not isinstance(token, NameToken): # token is ast.AST node
                 self.visit(token) # TODO (V1): Handle lambdas
-                continue # QUESTION: Or break?
+                break
 
-            # QUESTION: Break here? This is so function_def.attr isn't a thing
-            if current_entities["function"]:
-                current_entities["function"] = None
-
-            if curr_class_instance:
-                namespace = curr_class_instance.namespace
-                token_seq = attribute_chain[curr_class_instance_init_index + 1:index + 1]
+            if current_instance["entity"]:
+                namespace = current_instance["entity"].namespace
+                token_seq = attribute_chain[current_instance["init_index"] + 1:index + 1]
             else:
                 namespace = self._namespace
                 token_seq = attribute_chain[:index + 1]
 
             token_str = stringify_tokenized_nodes(token_seq)
             if token_str in namespace:
-                entity = namespace[token_str]
+                current_entity = namespace[token_str]
+                if isinstance(current_entity, ClassInstance):
+                    current_instance["entity"] = current_entity
+                    current_instance["init_index"] = index
+            elif isinstance(current_entity, ObjectNode):
+                # Base node exists –– create and append its child
+                current_entity = current_entity.add_child(ObjectNode(str(token)))
+                namespace[token_str] = current_entity
+            else:
+                current_entity = None
 
-                if isinstance(entity, Function):
-                    current_entities["function"] = entity
-                elif isinstance(entity, Class):
-                    current_entities["class"] = entity
-                elif isinstance(entity, ClassInstance):
-                    current_entities["class_instance"]["entity"] = entity
-                    current_entities["class_instance"]["init_index"] = index
-                else:
-                    current_entities["object_node"] = entity
-            elif current_entities["object_node"]: # Base node exists –– create and append its child
-                child_node = current_entities["object_node"].add_child(ObjectNode(str(token)))
-                namespace[token_str] = child_node
-                current_entities["object_node"] = child_node
+        last_token_is_instance = current_instance["init_index"] == len(attribute_chain) - 1
+        if isinstance(current_entity, ClassInstance) and last_token_is_instance:
+            current_instance = {"entity": None, "init_index": 0}
 
-        # QUESTION: Is it ever possible for current_entites["function"] and
-        # current_entites["class"] to both not be None? If not, then only keep
-        # track of one entity. Same with current_entities["object_node"].
-        # You'll always need to keep track of class_instance separately from
-        # the other entities (function, class, objectnode).
-
-        if current_entities["function"]:
-            return current_entities["function"], current_entities["class_instance"]
-        elif current_entities["class"]:
-            return current_entities["class"], current_entities["class_instance"]
-        elif current_entities["object_node"]:
-            return current_entities["object_node"], current_entities["class_instance"]
-        elif current_entities["class_instance"]["entity"] and current_entities["class_instance"]["init_index"] == len(attribute_chain) - 1:
-            return current_entities["class_instance"]["entity"], {"entity": None, "init_index": 0}
-
-        return None, current_entities["class_instance"]
+        return current_entity, current_instance
 
     ## Aliasing Handlers ##
 
@@ -1119,14 +1126,8 @@ class Saplings(ast.NodeVisitor):
             self._namespace.copy()
         )._namespace
 
-        class_entity = Class(
-            node,
-            {},
-            is_closure=False,
-            instantiated=False
-        )
+        class_entity = Class(node, {}, is_closure=False)
         self._namespace[node.name] = class_entity
-        self._classes.add(class_entity)
 
         static_variable_map = {}
         for name, n in class_level_namespace.items():
