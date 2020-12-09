@@ -52,7 +52,7 @@ For more advanced usage of the `Saplings` object, read the docstring [here]().
 
 ### Printing an Object Hierarchy
 
-`trees` holds a list of `ObjectNode`s, each representing the root node of an object hierarchy. Each `ObjectNode` has the following attributes:
+`get_trees` returns a list of `ObjectNode`s, each representing the root node of an object hierarchy and which has the following attributes:
 * **`name` _(str)_:** Name of the object
 * **`is_callable` _(bool)_:** Whether the object is callable (i.e. has `__call__` defined)
 * **`order` _(int)_:** Indicates the type of connection to the parent node (e.g. `0` is an attribute of the parent, `1` is an attribute of the output of the parent when called, etc.); `-1` if node is root
@@ -147,6 +147,8 @@ As of right now, `saplings` can't track _assignments_ to comprehensions, generat
 </p>
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
+
+Notably, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are considered to return tuples, and hence won't be tracked by Saplings.
 
 ### Control Flow
 
@@ -261,26 +263,23 @@ We know this function returns `module.foo`, but Saplings cannot tell which base 
 
 #### Generators
 
-Generators aren't processed as iterables. Instead, `saplings` ignores `yield` statements and treats the generator like a normal function. For example:
+Generators aren't processed as iterables. Instead, `saplings` ignores `yield`/`yield from` statements and treats the generator like a normal function. For example:
 
 ```python
-def foo():
-  for _ in range(10):
-    yield module.bar
+import module
 
-for x in foo():
-  print(x.fizz)
+def my_generator():
+  yield from module.some_items
+
+for item in my_generator():
+  print(item.name)
 ```
 
 `__index__().fizz` won't be added as a subtree to `module.bar`.
 
 #### Decorators
 
-Object flow is not tracked through user-defined decorators, and
-
-#### Single-Star Arguments
-
-Ignored.
+User-defined decorators don't actually modify functions.
 
 #### Anonymous Functions
 
@@ -313,4 +312,8 @@ TODO: Handle super()
 
 ### Miscellaneous
 
-Code in `exec` statements is ignored. `globals` and `nonlocals` are ignored. Stars / unpacking. Built-in functions (zip, map, etc.).
+#### `global` statements
+
+#### `eval` statements, and other built-in functions
+
+#### `nonlocals` function
