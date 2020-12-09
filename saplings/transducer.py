@@ -3,6 +3,8 @@ import ast
 from collections import defaultdict
 from copy import copy
 
+# TODO (V1): Write/Update docstrings
+
 
 ####################
 # NAMESPACE ENTITIES
@@ -320,8 +322,6 @@ def consolidate_call_nodes(node, parent=None):
 ##########
 
 
-# QUESTION: Should frequency values be based on # of times evaluated, or # of
-# times a construct appears in the code?
 class Saplings(ast.NodeVisitor):
     def __init__(self, tree, object_hierarchies=[], namespace={}):
         """
@@ -392,7 +392,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Helpers ##
 
-    def _process_subtree(self, tree, namespace):
+    def _process_subtree_in_new_scope(self, tree, namespace):
         """
         Used to process a subtree in a different scope/namespace from the
         current scope.
@@ -510,7 +510,7 @@ class Saplings(ast.NodeVisitor):
             arg_name = arg_names[arg_name_index]
 
             tokenized_default = recursively_tokenize_node(default, [])
-            default_node, _ = self._process_subtree(
+            default_node, _ = self._process_subtree_in_new_scope(
                 ast.Module(body=[]),
                 namespace
             )._process_attribute_chain(tokenized_default)
@@ -622,7 +622,7 @@ class Saplings(ast.NodeVisitor):
                 del namespace[name]
 
         # Processes function body
-        func_saplings = self._process_subtree(
+        func_saplings = self._process_subtree_in_new_scope(
             ast.Module(body=function.def_node.body),
             namespace
         )
@@ -889,7 +889,13 @@ class Saplings(ast.NodeVisitor):
                     for arg_token in token:
                         self._process_attribute_chain(arg_token.arg_val)
             elif not isinstance(token, NameToken): # token is ast.AST node
-                self.visit(token) # TODO (V1): Handle lambdas
+                self.visit(token)
+                # TODO (V2): Handle the following: (lambda x: x.attr)(module.foo)
+                break_and_process_nested_chains(
+                    attribute_chain[index + 1:],
+                    current_entity,
+                    current_instance
+                )
                 break
 
             if current_instance["entity"]:
@@ -1057,9 +1063,9 @@ class Saplings(ast.NodeVisitor):
 
             del namespace[arg_name]
 
-        self._process_subtree(node.body, namespace)
+        self._process_subtree_in_new_scope(node.body, namespace)
 
-        # TODO (V1): Handle assignments to lambdas and lambda function calls
+        # TODO (V2): Handle assignments to lambdas and lambda function calls
 
     def visit_Return(self, node):
         if node.value:
@@ -1084,11 +1090,6 @@ class Saplings(ast.NodeVisitor):
 
             return targ_str
 
-        # Static methods can be called from instances and the class.
-        # Class methods can be called from instances and the class. (Although what’s passed in as cls is different for each).
-        # Instance methods can be called from class (but self has to be manually passed in) or from instance (self is automatically passed in).
-        # Regular methods can be called from instances (but the instance is automatically passed in as an argument, even if the first argument is not self) and classes.
-
         methods, static_variables = [], []
         body_without_methods = []
         for n in node.body:
@@ -1105,14 +1106,16 @@ class Saplings(ast.NodeVisitor):
 
                 methods.append(n)
                 continue
-            elif isinstance(n, ast.Assign): # TODO (V1): Handle AnnAssign and AugAssign
+            elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 # BUG: Static variables can be defined without an assignment.
                 # For example:
                     # class foo(object):
                     #     for x in range(10):
                     #         pass
                 # foo.x is valid.
-                for target in n.targets:
+
+                targets = [n.target] if not isinstance(n, ast.Assign) else n.targets
+                for target in targets:
                     if isinstance(target, ast.Tuple):
                         for element in target.elts:
                             static_variables.append(stringify_target(element))
@@ -1121,7 +1124,7 @@ class Saplings(ast.NodeVisitor):
 
             body_without_methods.append(n)
 
-        class_level_namespace = self._process_subtree(
+        class_level_namespace = self._process_subtree_in_new_scope(
             ast.Module(body=body_without_methods),
             self._namespace.copy()
         )._namespace
@@ -1171,7 +1174,7 @@ class Saplings(ast.NodeVisitor):
         # If node is processed last so the Else nodes are processed with an
         # unaltered namespace
         for else_node in node.orelse:
-            self._process_subtree(
+            self._process_subtree_in_new_scope(
                 tree=else_node,
                 namespace=self._namespace.copy()
             )
@@ -1249,7 +1252,7 @@ class Saplings(ast.NodeVisitor):
                 else:
                     namespace[alias_str] = exception_node
 
-        body_saplings_obj = self._process_subtree(
+        body_saplings_obj = self._process_subtree_in_new_scope(
             ast.Module(body=node.body),
             namespace
         )
@@ -1316,7 +1319,7 @@ class Saplings(ast.NodeVisitor):
             if not index:
                 iter_tree_node, _ = self._process_attribute_chain(iter_tokens)
             else:
-                iter_tree_node, _ = self._process_subtree(
+                iter_tree_node, _ = self._process_subtree_in_new_scope(
                     ast.Module(body=[]),
                     namespace
                 )._process_attribute_chain(iter_tokens)
@@ -1330,7 +1333,7 @@ class Saplings(ast.NodeVisitor):
 
             child_ifs.extend(generator.ifs)
 
-        self._process_subtree(
+        self._process_subtree_in_new_scope(
             ast.Module(body=child_ifs + elts),
             namespace
         )
