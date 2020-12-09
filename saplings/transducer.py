@@ -39,7 +39,7 @@ class ObjectNode(object):
     def __iter__(self):
         return iter(self.children)
 
-    def __eq__(self, node): # TODO (V1): Improve this
+    def __eq__(self, node):
         if isinstance(node, type(self)):
             return self.name == node.name
 
@@ -120,7 +120,7 @@ class ArgToken(object):
         yield from self.arg_val
 
 
-class ArgsToken(object):
+class CallToken(object):
     def __init__(self, args):
         self.args = args
 
@@ -176,9 +176,6 @@ def tokenize_slice(slice):
             yield recursively_tokenize_node(partial_slice, [])
 
 
-# IDEA: Instead of calling recursively_tokenize_node, call self.generic_visit
-# and have the reference handlers (visit_Name, visit_Call, etc.) do the
-# tokenization and return the node; return None if not tokenizable
 def recursively_tokenize_node(node, tokens):
     """
     Takes a node representing an identifier or function call and recursively
@@ -211,7 +208,7 @@ def recursively_tokenize_node(node, tokens):
             )
             tokenized_args.append(arg)
 
-        tokens.append(ArgsToken(tokenized_args))
+        tokens.append(CallToken(tokenized_args))
         return recursively_tokenize_node(node.func, tokens)
     elif isinstance(node, ast.Attribute):
         tokens.append(NameToken(node.attr))
@@ -225,13 +222,13 @@ def recursively_tokenize_node(node, tokens):
         else:
             slice_tokens.extend(tokenize_slice(slice))
 
-        arg_tokens = ArgsToken([ArgToken(token) for token in slice_tokens])
+        arg_tokens = CallToken([ArgToken(token) for token in slice_tokens])
         subscript_name = NameToken("__index__")
         tokens.extend([arg_tokens, subscript_name])
 
         return recursively_tokenize_node(node.value, tokens)
     elif isinstance(node, ast.BinOp):
-        op_args = ArgsToken([ArgToken(
+        op_args = CallToken([ArgToken(
             arg_val=recursively_tokenize_node(node.right, []),
         )])
         op_name = NameToken(BIN_OPS_TO_FUNCS[type(node.op).__name__])
@@ -248,11 +245,11 @@ def recursively_tokenize_node(node, tokens):
                 ops=node.ops[1:],
                 comparators=node.comparators[1:]
             )
-            op_args = ArgsToken([ArgToken(
+            op_args = CallToken([ArgToken(
                 arg_val=recursively_tokenize_node(new_compare_node, [])
             )])
         else:
-            op_args = ArgsToken([ArgToken(
+            op_args = CallToken([ArgToken(
                 arg_val=recursively_tokenize_node(comparator, [])
             )])
 
@@ -283,7 +280,7 @@ def stringify_tokenized_nodes(tokens):
 def attribute_chain_handler(func):
     def wrapper(self, node):
         tokens = recursively_tokenize_node(node, [])
-        self._process_connected_tokens(tokens)
+        self._process_attribute_chain(tokens)
 
     return wrapper
 
@@ -349,7 +346,7 @@ class Saplings(ast.NodeVisitor):
         self._namespace = namespace
 
         self._functions = set()
-        self._classes = set()
+        self._classes = set() # QUESTION: Necessary?
 
         # ObjectNode, Function, Class, or ClassInstance produced by the first
         # evaluated return statement in the AST
@@ -517,7 +514,7 @@ class Saplings(ast.NodeVisitor):
             default_node, _ = self._process_subtree(
                 ast.Module(body=[]),
                 namespace
-            )._process_connected_tokens(tokenized_default)
+            )._process_attribute_chain(tokenized_default)
 
             if not default_node:
                 null_defaults.append(arg_name)
@@ -605,7 +602,7 @@ class Saplings(ast.NodeVisitor):
             else:
                 arg_name = argument.arg_name
 
-            arg_node, _ = self._process_connected_tokens(argument.arg_val)
+            arg_node, _ = self._process_attribute_chain(argument.arg_val)
             if not arg_node:
                 if arg_name in namespace:
                     del namespace[arg_name]
@@ -662,10 +659,10 @@ class Saplings(ast.NodeVisitor):
         """
 
         tokenized_target = recursively_tokenize_node(target, tokens=[])
-        targ_node, instance = self._process_connected_tokens(tokenized_target)
+        targ_node, instance = self._process_attribute_chain(tokenized_target)
 
         tokenized_value = recursively_tokenize_node(value, tokens=[])
-        val_node, _ = self._process_connected_tokens(tokenized_value)
+        val_node, _ = self._process_attribute_chain(tokenized_value)
 
         # TODO (V2): Handle assignments to data structures. For an assignment
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
@@ -692,67 +689,103 @@ class Saplings(ast.NodeVisitor):
         elif not targ_node and val_node:
             namespace[targ_str] = val_node
 
-    def _process_connected_tokens(self, tokens, increment_count=False):
+    def _process_attribute_chain(self, attribute_chain):
         """
-        This is the master function for appending to an object hierarchy.
-        `tokens` is a list of Name and Args tokens, representing a "connected
-        construct" –– meaning that, if the first token is an identifier for an
-        object node, the next token is a child of that node. Here's an example of
-        a connected construct:
+        Master function for processing attribute chains. An attribute chain is a
+        list of `Name` and `Call` tokens such that each `Name` token is an
+        (n + 1)th-order attribute of the nearest prior `Name` token, where n is
+        the number of `Call` tokens separating the two. For example:
 
         ```python
-        module.attr.foo(module.bar[0] + 1, key=lambda x: x ** 2)
+        module.bar(my.var, my_func).lorem[0] + ipsum
         ```
 
-        This expression is an `ast.Call` node which, when passed into
-        `recursively_tokenize_node`, returns:
+        This expression is an `ast.BinOp` node which, when passed into
+        `recursively_tokenize_node`, produces the following attribute chain:
 
         ```python
         [
             NameToken("module"),
-            NameToken("attr"),
-            NameToken("foo"),
-            ArgsToken([
-                ArgToken([
-                    NameToken("module"),
-                    NameToken("bar"),
-                    NameToken("__index__"),
-                    ArgsToken([
-                        ArgToken([ast.Num(0)])
-                    ]),
-                    NameToken("__add__"),
-                    ArgsToken([
-                        ArgToken([ast.Num(1)])
-                    ])
-                ]),
-                ArgToken([ast.Lambda(...)], arg_name="key")
+            NameToken("bar"),
+            CallToken([
+                ArgToken([NameToken("my"), NameToken("var")]),
+                ArgToken([NameToken("my_func")])
+            ]),
+            NameToken("lorem")
+            NameToken("__index__"),
+            CallToken([
+                ArgToken([ast.Num(0)])
+            ]),
+            NameToken("__add__"),
+            CallToken([
+                ArgToken([NameToken("ipsum")])
             ])
         ]
         ```
 
-        Note that the `ast.Num` and `ast.Lambda` nodes are not connected to the
-        other tokens, and are represented as AST nodes. These nodes are
-        processed by `self.visit`.
-
-        When these tokens are passed into `_process_connected_tokens`, the
-        following subtrees are created and added as children to the `module`
-        hierarchy: `attr -> foo -> ()` and
-        `bar -> __index__ -> () -> __add__ -> ()`. And if `increment_count` is
-        set to `True`, then the frequency value of the terminal nodes in these
-        subtrees is incremented.
+        The attribute chain is given to this function as `attribute_chain`,
+        which checks the namespace for entities referenced in the chain ...
 
         Parameters
         ----------
         tokens : list
-            list of tokenized AST nodes
-        increment_count : bool
-            whether or not to increment the frequency value of nodes
+            list of `NameToken`s and `CallToken`s
 
         Returns
         -------
-        {ObjectNode, None}
-            reference to the terminal node in the subtree
+        {ObjectNode, Function, Class, ClassInstance}, context_dict
         """
+
+        def break_attribute_chain():
+            pass
+
+        def update_current_entities(current_entities, entity, index):
+            if isinstance(entity, Function):
+                current_entities["function"] = entity
+            else:
+                current_entities["function"] = None
+
+            if isinstance(entity, Class):
+                current_entities["class"] = entity
+            elif isinstance(entity, ClassInstance):
+                current_entities["class_instance"]["entity"] = entity
+                current_entities["class_instance"]["init_index"] = index
+            elif isinstance(entity, ObjectNode):
+                current_entities["object_node"] = entity
+
+        def process_function_call(function, arguments):
+            if function.is_closure:
+                func_namespace = {
+                    **self._namespace.copy(),
+                    **function.init_namespace
+                }
+            else:
+                func_namespace = self._namespace.copy()
+
+            return_value, _ = self._process_function(
+                function,
+                func_namespace,
+                arguments
+            ) # TODO (V2): Handle tuple returns
+            return return_value
+
+        def process_method_call(function, class_instance, arguments):
+            method_type = function.method_type
+            if method_type and method_type != "static":
+                hidden_arg = ArgToken([NameToken("")])
+                token.args = [hidden_arg] + token.args
+
+            if method_type == "class":
+                self._namespace[""] = class_instance.class_entity
+            elif method_type == "instance":
+                self._namespace[""] = class_instance
+
+            return_value = process_function_call(function, arguments)
+
+            if "" in self._namespace:
+                del self._namespace[""]
+
+            return return_value
 
         current_entities = {
             "object_node": None,
@@ -760,113 +793,73 @@ class Saplings(ast.NodeVisitor):
             "class": None,
             "class_instance": {"entity": None, "init_index": 0}
         }
-
-        def handle_function_call(function, token, index):
-            function_namespace = self._namespace.copy()
-
-            # TODO (V1): Check if this causes problems and move into _process_function
-            if function.is_closure:
-                function_namespace = {
-                    **self._namespace.copy(),
-                    **function.init_namespace
-                }
-
-            return_value, _ = self._process_function(
-                function,
-                function_namespace,
-                token.args
-            ) # TODO (V2): Handle tuple returns
-
-            if isinstance(return_value, Function):
-                current_entities["function"] = return_value
-            else:
-                current_entities["function"] = None
-
-            if isinstance(return_value, Class):
-                current_entities["class"] = return_value
-            elif isinstance(return_value, ClassInstance):
-                current_entities["class_instance"]["entity"] = return_value
-                current_entities["class_instance"]["init_index"] = index
-            elif isinstance(return_value, ObjectNode):
-                current_entities["object_node"] = return_value
-
-            return return_value
-
-        for index, token in enumerate(tokens):
+        for index, token in enumerate(attribute_chain):
             curr_class_instance = current_entities["class_instance"]["entity"]
             curr_class_instance_init_index = current_entities["class_instance"]["init_index"]
 
-            if isinstance(token, ArgsToken):
-                if current_entities["function"] and not curr_class_instance: # Process call of user-defined function
-                    return_value = handle_function_call(
+            if isinstance(token, CallToken):
+                if current_entities["function"] and not curr_class_instance:
+                    # Process call of user-defined function
+                    return_value = process_function_call(
                         current_entities["function"],
-                        token,
+                        token.args
+                    )
+                    update_current_entities(
+                        current_entities,
+                        return_value,
                         index
                     )
                     continue
-                elif current_entities["function"] and curr_class_instance: # Process call of user-defined instance/class/static method
-                    # TODO (V1): Handle method closures (i.e. instance method that returns another method)
-                    function_namespace = self._namespace.copy()
-                    method_type = current_entities["function"].method_type
-
-                    hidden_arg = ArgToken([NameToken("")])
-                    if method_type and method_type != "static":
-                        token.args = [hidden_arg] + token.args
-
-                    if method_type == "class":
-                        self._namespace[""] = curr_class_instance.class_entity
-                    elif method_type == "instance":
-                        self._namespace[""] = curr_class_instance
-
-                    return_value = handle_function_call(
+                elif current_entities["function"] and curr_class_instance:
+                    # Process call of user-defined instance/class/static method
+                    return_value = process_method_call(
                         current_entities["function"],
-                        token,
+                        curr_class_instance,
+                        token.args
+                    )
+                    update_current_entities(
+                        current_entities,
+                        return_value,
                         index
                     )
-
-                    if "" in self._namespace:
-                        del self._namespace[""]
-
                     continue
-                elif current_entities["class"]: # Process instantiation of user-defined class
+                elif current_entities["class"]:
+                    # Process instantiation of user-defined class
+
                     # TODO (V1): Handle class closures? i.e. a function that returns a class? Class defined inside a class?? Recursive __init__?
 
-                    init_namespace = current_entities["class"].init_namespace
-                    instance = ClassInstance(
-                        current_entities["class"],
-                        init_namespace.copy()
-                    )
+                    curr_class = current_entities["class"]
+                    init_namespace = curr_class.init_namespace
+                    instance = ClassInstance(curr_class, init_namespace.copy())
+
                     if "__init__" in init_namespace:
                         constructor = init_namespace["__init__"]
                         if isinstance(constructor, Function):
-                            self_arg = ArgToken([NameToken("")])
-                            token.args = [self_arg] + token.args
-                            function_namespace = self._namespace.copy()
-
-                            self._namespace[""] = instance
-
-                            _, func_context = self._process_function(
+                            process_method_call(
                                 constructor,
-                                function_namespace,
+                                instance,
                                 token.args
                             )
+                        else:
+                            pass # TODO (V1): If __init__ is not callable,
+                                 # class cannot be instantiated –– handle this
 
-                            del self._namespace[""]
-
-                    current_entities["class"].instantiated = True
+                    curr_class.instantiated = True # QUESTION: Do we even need to know if classes are instantiated or not? Should we even keep track of classes in self._classes?
                     current_entities["class"] = None
-                    current_entities["class_instance"]["entity"] = instance
-                    current_entities["class_instance"]["init_index"] = index
 
+                    update_current_entities(current_entities, instance, index)
                     continue
                 elif curr_class_instance:
                     if "__call__" in curr_class_instance.namespace:
-                        pass # TODO (V1)
+                        pass
+                    else:
+                        pass # TODO (V1): Iterate through the rest of the tokens
+                             # and only process the contents of ArgTokens;
+                             # ignore the rest
                 else:
                     for arg_token in token:
-                        arg_node, _ = self._process_connected_tokens(
-                            arg_token.arg_val,
-                            increment_count
+                        arg_node, _ = self._process_attribute_chain(
+                            arg_token.arg_val
                         )
             elif not isinstance(token, NameToken): # token is ast.AST node
                 self.visit(token) # TODO (V1): Handle lambdas
@@ -878,10 +871,10 @@ class Saplings(ast.NodeVisitor):
 
             if curr_class_instance:
                 namespace = curr_class_instance.namespace
-                token_seq = tokens[curr_class_instance_init_index + 1:index + 1]
+                token_seq = attribute_chain[curr_class_instance_init_index + 1:index + 1]
             else:
                 namespace = self._namespace
-                token_seq = tokens[:index + 1]
+                token_seq = attribute_chain[:index + 1]
 
             token_str = stringify_tokenized_nodes(token_seq)
             if token_str in namespace:
@@ -904,6 +897,8 @@ class Saplings(ast.NodeVisitor):
         # QUESTION: Is it ever possible for current_entites["function"] and
         # current_entites["class"] to both not be None? If not, then only keep
         # track of one entity. Same with current_entities["object_node"].
+        # You'll always need to keep track of class_instance separately from
+        # the other entities (function, class, objectnode).
 
         if current_entities["function"]:
             return current_entities["function"], current_entities["class_instance"]
@@ -911,7 +906,7 @@ class Saplings(ast.NodeVisitor):
             return current_entities["class"], current_entities["class_instance"]
         elif current_entities["object_node"]:
             return current_entities["object_node"], current_entities["class_instance"]
-        elif current_entities["class_instance"]["entity"] and current_entities["class_instance"]["init_index"] == len(tokens) - 1:
+        elif current_entities["class_instance"]["entity"] and current_entities["class_instance"]["init_index"] == len(attribute_chain) - 1:
             return current_entities["class_instance"]["entity"], {"entity": None, "init_index": 0}
 
         return None, current_entities["class_instance"]
@@ -1062,7 +1057,7 @@ class Saplings(ast.NodeVisitor):
     def visit_Return(self, node):
         if node.value:
             tokenized_node = recursively_tokenize_node(node.value, [])
-            self._return_value, _ = self._process_connected_tokens(tokenized_node)
+            self._return_value, _ = self._process_attribute_chain(tokenized_node)
 
         self._is_traversal_halted = True
 
@@ -1209,7 +1204,7 @@ class Saplings(ast.NodeVisitor):
         if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
-        if not self._return_value: # TODO (V1): Explain this in a comment
+        if not self._return_value: # TODO (V1): Explain this in a comment (do the same for visit_While)
             self._is_traversal_halted = False
 
     def visit_AsyncFor(self, node):
@@ -1221,7 +1216,7 @@ class Saplings(ast.NodeVisitor):
         if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
-        if not self._return_value: # QUESTION: Hmm?
+        if not self._return_value:
             self._is_traversal_halted = False
 
     def visit_Try(self, node):
@@ -1242,7 +1237,7 @@ class Saplings(ast.NodeVisitor):
 
         if node.type:
             tokenized_exception = recursively_tokenize_node(node.type, [])
-            exception_node, _ = self._process_connected_tokens(tokenized_exception)
+            exception_node, _ = self._process_attribute_chain(tokenized_exception)
 
             if node.name: # except A as B
                 tokenized_alias = recursively_tokenize_node(node.name, [])
@@ -1318,12 +1313,12 @@ class Saplings(ast.NodeVisitor):
             iter_tokens = recursively_tokenize_node(iter_node, [])
 
             if not index:
-                iter_tree_node, _ = self._process_connected_tokens(iter_tokens)
+                iter_tree_node, _ = self._process_attribute_chain(iter_tokens)
             else:
                 iter_tree_node, _ = self._process_subtree(
                     ast.Module(body=[]),
                     namespace
-                )._process_connected_tokens(iter_tokens)
+                )._process_attribute_chain(iter_tokens)
 
             # TODO (V1): Handle when generator.target is ast.Tuple
             targ_tokens = recursively_tokenize_node(generator.target, [])
