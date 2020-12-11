@@ -4,6 +4,12 @@ from collections import defaultdict
 from copy import copy
 
 # TODO (V1): Write/Update docstrings
+    # Use vocabulary like "containing scope" instead of parent scope, and
+    # "objects with local scope die as soon as the function exits, unless
+    # they're returned"
+
+    # Explain how "attribute chains" and "object flow" are key to understanding
+    # how this all works
 
 
 ####################
@@ -38,9 +44,6 @@ class ObjectNode(object):
     def __str__(self):
         return f"{self.name} ({'C' if self.is_callable else 'NC'}, {self.order})"
 
-    def __iter__(self):
-        return iter(self.children)
-
     def __eq__(self, node):
         if isinstance(node, type(self)):
             return self.name == node.name
@@ -64,11 +67,6 @@ class ObjectNode(object):
         self.children.append(node)
         return node
 
-    def depth_first(self):
-        yield self
-        for node in self:
-            yield from node.depth_first()
-
     def breadth_first(self):
         node_queue = [self]
         while node_queue:
@@ -79,12 +77,13 @@ class ObjectNode(object):
 
 
 class Function(object):
-    def __init__(self, def_node, init_namespace, is_closure=False, called=False, method_type=None):
+    def __init__(self, def_node, init_namespace, is_closure=False, called=False, method_type=None, containing_class=None):
         self.def_node = def_node
         self.init_namespace = init_namespace
         self.is_closure = is_closure
         self.called = called
         self.method_type = method_type
+        self.containing_class = containing_class # TEMP
 
 
 class Class(object):
@@ -763,17 +762,33 @@ class Saplings(ast.NodeVisitor):
             ) # TODO (V2): Handle tuple returns
             return return_value
 
-        def process_method_call(function, class_instance, arguments):
-            method_type = function.method_type
-            if method_type and method_type != "static":
-                hidden_arg = ArgToken([NameToken("")])
-                token.args = [hidden_arg] + token.args
+        def bind_entity_to_arguments(entity, arguments):
+            hidden_arg = ArgToken([NameToken("")])
+            self._namespace[""] = entity
 
-            if method_type == "class":
-                self._namespace[""] = class_instance.class_entity
-            elif method_type == "instance":
-                self._namespace[""] = class_instance
+            return [hidden_arg] + arguments
 
+        def process_instance_method_call(function, class_instance, arguments):
+            if function.method_type == "class":
+                arguments = bind_entity_to_arguments(
+                    class_instance.class_entity,
+                    arguments
+                )
+            elif function.method_type == "instance":
+                arguments = bind_entity_to_arguments(class_instance, arguments)
+
+            return_value = process_function_call(function, arguments)
+
+            if "" in self._namespace:
+                del self._namespace[""]
+
+            return return_value
+
+        def process_class_method_call(function, arguments):
+            arguments = bind_entity_to_arguments(
+                function.containing_class,
+                arguments
+            )
             return_value = process_function_call(function, arguments)
 
             if "" in self._namespace:
@@ -797,17 +812,23 @@ class Saplings(ast.NodeVisitor):
                     if current_instance["entity"]:
                         # Process call of function from instance of a
                         # user-defined class
-                        current_entity = process_method_call(
+                        current_entity = process_instance_method_call(
                             current_entity,
                             current_instance["entity"],
                             token.args
                         )
                     else:
                         # Process call of user-defined function
-                        current_entity = process_function_call(
-                            current_entity,
-                            token.args
-                        )
+                        if current_entity.method_type == "class":
+                            current_entity = process_class_method_call(
+                                current_entity,
+                                token.args
+                            )
+                        else:
+                            current_entity = process_function_call(
+                                current_entity,
+                                token.args
+                            )
 
                     if isinstance(current_entity, ClassInstance):
                         current_instance["entity"] = current_entity
@@ -817,7 +838,8 @@ class Saplings(ast.NodeVisitor):
                 elif isinstance(current_entity, Class):
                     # Process instantiation of user-defined class
 
-                    # TODO (V1): Handle class closures? i.e. a function that returns a class? Class defined inside a class?? Recursive __init__?
+                    # TODO (V1): Handle classes defined inside a class
+                    # TODO (V1) Handle functions that return a class (i.e. class closures)
 
                     init_namespace = current_entity.init_namespace
                     class_instance = ClassInstance(
@@ -828,7 +850,7 @@ class Saplings(ast.NodeVisitor):
                     if "__init__" in init_namespace:
                         constructor = init_namespace["__init__"]
                         if isinstance(constructor, Function):
-                            process_method_call(
+                            process_instance_method_call(
                                 constructor,
                                 class_instance,
                                 token.args
@@ -864,7 +886,7 @@ class Saplings(ast.NodeVisitor):
                         # BUG: __call__ may be a lambda function or an
                         # ObjectNode (e.g. __call__ = module.imported_call)
                         if isinstance(call_entity, Function):
-                            current_entity = process_method_call(
+                            current_entity = process_instance_method_call(
                                 call_entity,
                                 current_entity,
                                 token.args
@@ -1149,6 +1171,7 @@ class Saplings(ast.NodeVisitor):
             method.name = method_name
 
             function.method_type = method.method_type
+            function.containing_class = class_entity
             method_map[method_name] = function
 
         # Everything here is an attribute of `self`
@@ -1208,7 +1231,9 @@ class Saplings(ast.NodeVisitor):
         if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
-        if not self._return_value: # TODO (V1): Explain this in a comment (do the same for visit_While)
+        # If loop is broken by anything other than a return statement, then we
+        # don't want to halt the traversal outside of the loop
+        if not self._return_value:
             self._is_traversal_halted = False
 
     def visit_AsyncFor(self, node):
@@ -1220,6 +1245,8 @@ class Saplings(ast.NodeVisitor):
         if not self._is_traversal_halted:
             self.visit(ast.Module(body=node.orelse))
 
+        # If loop is broken by anything other than a return statement, then we
+        # don't want to halt the traversal outside of the loop
         if not self._return_value:
             self._is_traversal_halted = False
 
@@ -1352,7 +1379,7 @@ class Saplings(ast.NodeVisitor):
 
     ## Miscellaneous ##
 
-    # TODO (V1): Handle globals, ifexps
+    # TODO (V1): Handle ifexps
 
     ## Public Methods ##
 
