@@ -14,10 +14,8 @@
 - Abstractness
 - Instability
 - Function Rankings
-- # of Partial, Recursive, and Curried Functions
-- # of Lines of Code
-- Cyclomatic Complexity (COMING SOON)
-- Maintainability Index (COMING SOON) -->
+- Cyclomatic Complexity
+- Maintainability Index -->
 
 ## Installation
 
@@ -31,7 +29,7 @@ $ pip install saplings
 
 ## Usage
 
-Using `saplings` takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) using the `ast` module. Then, import the `Saplings` object and initialize it with the root node of the AST.
+Using saplings takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) using the `ast` module. Then, import the `Saplings` object and initialize it with the root node of the AST.
 
 ```python
 import ast
@@ -118,7 +116,7 @@ my_parent()().T # my_attr is a 2nd-order child of my_obj
 
 #### What counts as a function?
 
-In Python, subscripts, comparisons, and binary operations are all just syntactic sugar for function calls, and are treated by `saplings` as such. Here are some common "translations:"
+In Python, subscripts, comparisons, and binary operations are all just syntactic sugar for function calls, and are treated by saplings as such. Here are some common "translations:"
 
 ```python
 my_obj['my_sub'] # => my_obj.__index__('my_sub')
@@ -136,11 +134,11 @@ Saplings _statically_ analyzes the usage of a module in a program, meaning it do
 
 Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
 
-While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Here are all the failure modes I'm aware of (and currently working on fixing):
+While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Below is a list of all the failure modes I'm aware of (and currently working on fixing). If you discover a bug or missing feature that isn't listed here, please create an issue for it so I can add it to this list and work on fixing it.
 
 ### Data Structures
 
-As of right now, `saplings` can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
+As of right now, saplings can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
 <p align="center">
   <img width="75%" src="data_structures.png" />
@@ -148,7 +146,7 @@ As of right now, `saplings` can't track _assignments_ to comprehensions, generat
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
 
-Notably, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are considered to return tuples, and hence won't be tracked by Saplings.
+Notably, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are considered to return tuples, and hence won't be tracked by saplings. <!--Mention star args?-->
 
 ### Control Flow
 
@@ -167,7 +165,7 @@ If `np.array([])` is an empty list, then the print statement, and therefore `x.m
   <img width="50%" src="for_loop.png" />
 </p>
 
-But as of right now, `saplings` will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
+But as of right now, saplings will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
 
 #### `while` loops
 
@@ -181,7 +179,7 @@ We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do no
   <img width="75%" src="if_else.png" />
 </p>
 
-Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, `saplings` would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes, like so:
+Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes, like so:
 
 <p align="center">
   <img width="65%" src="if_else_double_trees.png" />
@@ -206,29 +204,22 @@ for x in range(10):
   y.mean()
 ```
 
-It may be the case that `mean` is an attribute of `np.array`, but saplings will not capture this since `y.mean()` would never be executed.
+It may be the case that `mean` is actually an attribute of `np.array`, but saplings will not capture this since `y.mean()` would never be executed.
 
 ### Functions
 
-#### Conditional return types
+<!--#### Conditional return types
 
-`saplings` can generally track module and user-defined functions, but there are some edge cases it cannot handle. For example, because module functions must be treated as black-boxes to `saplings`, conditional return types cannot be accounted for. Consider this code and the hierarchy `saplings` produces:
+`saplings` can generally track module and user-defined functions, but there are some edge cases it cannot handle. For example, because module functions must be treated as black-boxes to `saplings`, conditional return types cannot be accounted for. Consider the following code and trees that saplings produces:
 
 ```python
-import module
+import my_module
 
-module.foo(5).bar1()
-module.foo(10).bar2()
+my_module.foo(5).attr1()
+my_module.foo(10).attr2()
 ```
 
-```
-module
- +-- foo
- |   +-- bar1
- |   +-- bar2
-```
-
-However, if `module.foo` is defined as:
+However, suppose `my_module.foo` is defined in the backend as:
 
 ```python
 def foo(x):
@@ -238,60 +229,144 @@ def foo(x):
     return ObjectB()
 ```
 
-and `ObjectB` doesn't have `bar1` as an attribute, then `saplings` will treat `bar1` and `bar2` as attributes of the same object.
+and `ObjectB` doesn't have `attr1` as an attribute. Then, saplings will have incorrectly treated `attr1` and `attr2` as attributes of the same object.-->
 
 #### Recursion
 
 Saplings cannot process recursive function calls. Consider the following example:
 
 ```python
-import module
+import some_module
 
 def my_recursive_func(input):
   if input > 5:
     return my_recursive_func(input - 1)
   elif input > 1:
-    return module.foo
+    return some_module.foo
   else:
-    return module.bar
+    return some_module.bar
 
 output = my_recursive_func(5)
 output.attr()
 ```
 
-We know this function returns `module.foo`, but Saplings cannot tell which base case is hit, and therefore cannot track the output. To avoid false positives, we assume this function returns nothing, and thus `attr` will not be captured and added to the object hierarchy.
+We know this function returns `some_module.foo`, but saplings cannot tell which base case is hit, and therefore can't track the output. To avoid false positives, we assume this function returns nothing, and thus `attr` will not be captured and added to the object hierarchy. The tree saplings produces is:
+
+<!--Add visualization-->
 
 #### Generators
 
-Generators aren't processed as iterables. Instead, `saplings` ignores `yield`/`yield from` statements and treats the generator like a normal function. For example:
+Generators aren't processed as iterables. Instead, saplings ignores `yield`/`yield from` statements and treats the generator like a normal function. For example:
 
 ```python
-import module
+import some_module
 
 def my_generator():
-  yield from module.some_items
+  yield from some_module.some_items
 
 for item in my_generator():
   print(item.name)
 ```
 
-`__index__().fizz` won't be added as a subtree to `module.bar`.
+Here, `__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like:
+
+<!--Add visualization-->
+
+Notably, this limitation will only produce false negatives (i.e. failing to add objects to the hierarchy), not false positives (i.e. adding the wrong objects to the hierarchy).
 
 #### Decorators
 
-User-defined decorators don't actually modify functions.
+Saplings doesn't process the application of decorators, and thus assumes that user-defined decorators do not extend the functionality of the functions they're applied to. For example:
+
+```python
+import module
+
+def my_decorator(func):
+  def wrapper():
+    output = func()
+    return output.bar
+
+  return wrapper
+
+@my_decorator
+def my_func():
+  return module.foo
+
+my_func()
+```
+
+For this, saplings _should_ produce the following tree:
+
+<!--Tree visualization-->
+
+But instead, saplings won't capture `bar` as an attribute of `module.foo` because it doesn't apply `my_decorator` to `my_func`. This is actually a major limitation (high on my list of things to fix) as it can produce both type I and II errors. Saplings also assumes that decorators defined by imported modules don't modify the user-defined functions they're applied to, which can cause similar problems.
 
 #### Anonymous Functions
 
-Assignments/Calls are ignored.
+While the _bodies_ of anonymous functions (`lambda`s) are processed, object flow through assignments and calls of those functions is not tracked. For example:
+
+```python
+import numpy as np
+
+transpose_and_diag = lambda x: np.diagonal(x.T)
+transpose_and_diag(np.random.randn(5, 5))
+```
+
+Saplings will produce the following tree:
+
+<!--Tree visualization-->
+
+Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by saplings, but the assignment to `transpose_and_diag` is not recognized, and therefore the call of `transpose_and_diag` is not processed.
 
 ### Classes
 
-Saplings can keep track of the state of each instance of a user-defined class. It also understands the difference between class, static, and instance methods. For example:
+Saplings can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, and classes defined within classes. Notably, it can keep track of the state of each instance of a user-defined class. Consider this example:
 
 ```python
+import torch.nn as nn
+from torch import tensor
 
+class Perceptron(nn.Module):
+  loss = None
+
+  def __init__(self, in_channels, out_channels):
+    super(NeuralNet, self).__init__()
+    self.layer = nn.Linear(in_channels, out_channels)
+    self.output = Perceptron.create_output_layer()
+
+  @staticmethod
+  def create_output_layer():
+    def layer(x):
+      return x.mean()
+
+    return layer
+
+  @classmethod
+  def calculate_loss(cls, output, target):
+    cls.loss = output - target
+    return cls.loss
+
+  def __call__(self, x):
+    x = self.layer(x)
+    return self.output(x)
+
+model = Perceptron(1, 8)
+output = model(tensor([10]))
+loss = Perceptron.calculate_loss(output, 8)
 ```
+
+However, there is some functionality with classes that has yet to be implemented.
+
+#### Propagating changes to class variables to class instances
+
+```python
+Perceptron.loss.item() # Works
+model.loss.item() # Doesn't work
+```
+
+#### Class Closures
+
+i.e. functions that return a class
 
 #### Inheritance
 
@@ -306,7 +381,7 @@ class MyClass(module.blah):
 ```
 
 Then `module.blah.parent_func` will not be captured. In other words, inheritance is ignored.
-TODO: Handle super()
+`super()` doesn't do shit.
 
 #### Metaclasses
 
@@ -314,6 +389,4 @@ TODO: Handle super()
 
 #### `global` statements
 
-#### `eval` statements, and other built-in functions
-
-#### `nonlocals` function
+#### `eval`, `nonlocals`, and other built-in functions
