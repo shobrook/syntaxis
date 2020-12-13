@@ -666,7 +666,7 @@ class Saplings(ast.NodeVisitor):
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
         # alias for bar().
 
-        # TODO (V1): Handle assignments to class variables that propagate to
+        # TODO (V2): Handle assignments to class variables that propagate to
         # class instances (e.g. MyClass.variable = ...; my_instance.variable.foo())
         if instance["entity"]:
             namespace = instance["entity"].namespace
@@ -768,27 +768,24 @@ class Saplings(ast.NodeVisitor):
 
             return [hidden_arg] + arguments
 
-        def process_instance_method_call(function, class_instance, arguments):
-            if function.method_type == "class":
+        def process_method_call(function, arguments, class_instance=None):
+            if class_instance: # Method is called by instance
+                if function.method_type == "class":
+                    arguments = bind_entity_to_arguments(
+                        class_instance.class_entity,
+                        arguments
+                    )
+                elif function.method_type == "instance":
+                    arguments = bind_entity_to_arguments(
+                        class_instance,
+                        arguments
+                    )
+            else: # Method is called by class
                 arguments = bind_entity_to_arguments(
-                    class_instance.class_entity,
+                    function.containing_class,
                     arguments
                 )
-            elif function.method_type == "instance":
-                arguments = bind_entity_to_arguments(class_instance, arguments)
 
-            return_value = process_function_call(function, arguments)
-
-            if "" in self._namespace:
-                del self._namespace[""]
-
-            return return_value
-
-        def process_class_method_call(function, arguments):
-            arguments = bind_entity_to_arguments(
-                function.containing_class,
-                arguments
-            )
             return_value = process_function_call(function, arguments)
 
             if "" in self._namespace:
@@ -812,19 +809,21 @@ class Saplings(ast.NodeVisitor):
                     if current_instance["entity"]:
                         # Process call of function from instance of a
                         # user-defined class
-                        current_entity = process_instance_method_call(
+                        current_entity = process_method_call(
                             current_entity,
-                            current_instance["entity"],
-                            token.args
+                            token.args,
+                            current_instance["entity"]
                         )
                     else:
-                        # Process call of user-defined function
                         if current_entity.method_type == "class":
-                            current_entity = process_class_method_call(
+                            # Process call of function from user-defined class
+                            current_entity = process_method_call(
                                 current_entity,
                                 token.args
                             )
                         else:
+                            # Process call of user-defined function that is
+                            # either unbound to a class or a static method
                             current_entity = process_function_call(
                                 current_entity,
                                 token.args
@@ -839,7 +838,7 @@ class Saplings(ast.NodeVisitor):
                     # Process instantiation of user-defined class
 
                     # TODO (V1): Handle classes defined inside a class
-                    # TODO (V1) Handle functions that return a class (i.e. class closures)
+                    # TODO (V2) Handle functions that return a class (i.e. class closures)
 
                     init_namespace = current_entity.init_namespace
                     class_instance = ClassInstance(
@@ -850,10 +849,10 @@ class Saplings(ast.NodeVisitor):
                     if "__init__" in init_namespace:
                         constructor = init_namespace["__init__"]
                         if isinstance(constructor, Function):
-                            process_instance_method_call(
+                            process_method_call(
                                 constructor,
-                                class_instance,
-                                token.args
+                                token.args,
+                                class_instance
                             )
                         else:
                             # If __init__ is not callable, class cannot be
@@ -886,10 +885,10 @@ class Saplings(ast.NodeVisitor):
                         # BUG: __call__ may be a lambda function or an
                         # ObjectNode (e.g. __call__ = module.imported_call)
                         if isinstance(call_entity, Function):
-                            current_entity = process_instance_method_call(
+                            current_entity = process_method_call(
                                 call_entity,
-                                current_entity,
-                                token.args
+                                token.args,
+                                current_entity
                             )
 
                             if isinstance(current_entity, ClassInstance):
