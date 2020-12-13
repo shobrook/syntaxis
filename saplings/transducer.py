@@ -990,8 +990,6 @@ class Saplings(ast.NodeVisitor):
                 module_node.add_child(new_child)
 
     def visit_Assign(self, node):
-        # TODO (V1): I think tuple assignment is broken. Fix it!
-
         values = node.value
         targets = node.targets if hasattr(node, "targets") else (node.target,)
         for target in targets: # Multiple assignment (e.g. a = b = ...)
