@@ -1332,36 +1332,22 @@ class Saplings(ast.NodeVisitor):
     #   my_var[0].attr
 
     def _comprehension_helper(self, elts, generators):
-        namespace = self._namespace.copy()
-        child_ifs = []
-        for index, generator in enumerate(generators):
-            iter_node = ast.Subscript(
-                value=generator.iter,
-                slice=ast.Index(value=ast.NameConstant(None)),
-                ctx=ast.Load()
-            ) # We treat the target as a subscript of iter
-            iter_tokens = recursively_tokenize_node(iter_node, [])
-
-            if not index:
-                iter_tree_node, _ = self._process_attribute_chain(iter_tokens)
-            else:
-                iter_tree_node, _ = self._process_subtree_in_new_scope(
-                    ast.Module(body=[]),
-                    namespace
-                )._process_attribute_chain(iter_tokens)
-
-            # TODO (V1): Handle when generator.target is ast.Tuple
-            targ_tokens = recursively_tokenize_node(generator.target, [])
-            targ_str = stringify_tokenized_nodes(targ_tokens)
-
-            if iter_tree_node: # QUESTION: Needed? If so, might be needed elsewhere too
-                namespace[targ_str] = iter_tree_node
-
-            child_ifs.extend(generator.ifs)
+        comprehension_body = []
+        for generator in generators:
+            iter_node = ast.Assign(
+                target=generator.target,
+                value=ast.Subscript(
+                    value=generator.iter,
+                    slice=ast.Index(value=ast.NameConstant(None)),
+                    ctx=ast.Load()
+                )
+            )
+            comprehension_body.append(iter_node)
+            comprehension_body.extend(generator.ifs)
 
         self._process_subtree_in_new_scope(
-            ast.Module(body=child_ifs + elts),
-            namespace
+            ast.Module(body=comprehension_body + elts),
+            self._namespace.copy()
         )
 
     def visit_ListComp(self, node):
