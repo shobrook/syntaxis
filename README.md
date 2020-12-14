@@ -432,7 +432,9 @@ output = model(tensor([10]))
 loss = Perceptron.calculate_loss(output, 8)
 ```
 
-
+<p align="center">
+  <img width="35%" src="img/class.png" />
+</p>
 
 However, there is some functionality with classes that has yet to be implemented.
 
