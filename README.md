@@ -218,7 +218,7 @@ print(y.max())
 ```
 
 <p align="center">
-  <img width="35%" src="img/if_else_1.png" />
+  <img width="50%" src="img/if_else_1.png" />
 </p>
 
 Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes:
@@ -315,54 +315,85 @@ for item in my_generator():
 Here, `__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like:
 
 <p align="center">
-  <img width="25%" src="img/generators.png" />
+  <img width="50%" src="img/generators.png" />
 </p>
 
 Notably, this limitation will only produce false negatives –– not false positives.
 
 #### Decorators
 
-Saplings doesn't process the application of decorators, and thus assumes that user-defined decorators do not extend the functionality of the functions they're applied to. For example:
+Saplings doesn't process the application of decorators, and thus assumes that user-defined decorators do not extend the functionality of the functions they're applied to. For example, given:
 
 ```python
-import module
+import some_module
 
 def my_decorator(func):
   def wrapper():
     output = func()
-    return output.bar
+    return output.attr
 
   return wrapper
 
 @my_decorator
 def my_func():
-  return module.foo
+  return some_module.foo
 
-my_func()
+my_func().bar()
 ```
 
-For this, saplings _should_ produce the following tree:
+saplings _should_ produce the following tree:
 
-<!--Tree visualization-->
+<p align="center">
+  <img width="35%" src="img/decorators_1.png" />
+</p>
 
-But instead, saplings won't capture `bar` as an attribute of `module.foo` because it doesn't apply `my_decorator` to `my_func`. This is actually a major limitation (high on my list of things to fix) as it can produce both type I and II errors. Saplings also assumes that decorators defined by imported modules don't modify the user-defined functions they're applied to, which can cause similar problems.
+But because it doesn't apply `my_decorator` to `my_func`, `attr` isn't captured as an attribute of `module.foo`. Instead, this tree is produced:
+
+<p align="center">
+  <img width="35%" src="img/decorators_2.png" />
+</p>
+
+As can be seen, this limitation can produce both type I and II errors. Notice, however, that saplings can handle the usage of user-defined decorators without the `@` "syntactic sugar," like so:
+
+```python
+def my_func():
+  return module.foo
+
+my_func = my_decorator(my_func)
+```
+
+Saplings also assumes that decorators defined by imported modules don't modify the user-defined functions they're applied to. For example:
+
+```python
+import some_module
+
+@some_module.some_decorator
+def my_func():
+  return some_module.foo
+
+my_func().bar()
+```
+
+Here, `foo` is treated as an undecorated function, and thus saplings produces the same tree as above.
 
 #### Anonymous Functions
 
-While the _bodies_ of anonymous functions (`lambda`s) are processed, object flow through assignments and calls of those functions is not tracked. For example:
+While the _bodies_ of anonymous (`lambda`) functions are processed, object flow through assignments and calls of those functions is not tracked. For example, given:
 
 ```python
 import numpy as np
 
-transpose_and_diag = lambda x: np.diagonal(x.T)
-transpose_and_diag(np.random.randn(5, 5))
+trans_diag = lambda x: np.diagonal(x.T)
+trans_diag(np.random.randn(5, 5))
 ```
 
-Saplings will produce the following tree:
+saplings will produce the following tree:
 
-<!--Tree visualization-->
+<p align="center">
+  <img width="35%" src="img/anonymous.png" />
+</p>
 
-Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by saplings, but the assignment to `transpose_and_diag` is not recognized, and therefore the call of `transpose_and_diag` is not processed.
+Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by saplings, but the assignment to `trans_diag` is not recognized, and therefore the function call is not processed.
 
 ### Classes
 
