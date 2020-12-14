@@ -549,59 +549,48 @@ class Saplings(ast.NodeVisitor):
             namespace)
         """
 
-        # TODO (V1): Handle single-star args
-
-        # Starred nodes can now appear in args, and kwargs is replaced by keyword
-        # nodes in keywords for which arg is None.
-
-
-        # args, posonlyargs and kwonlyargs are lists of arg nodes.
-        # vararg and kwarg are single arg nodes, referring to the *args, **kwargs parameters.
-        # kw_defaults is a list of default values for keyword-only arguments. If one is None, the corresponding argument is required.
-        # defaults is a list of default values for arguments that can be passed positionally. If there are fewer defaults, they correspond to the last n arguments.
-
-        # TODO: Check if arguments is empty to skip all this BS
-
         parameters = function.def_node.args
 
-        arg_names = [a.arg for a in parameters.args]
-        kwonlyarg_names = [a.arg for a in parameters.kwonlyargs]
+        pos_params = [a.arg for a in parameters.args]
+        kw_params = [a.arg for a in parameters.kwonlyargs]
 
-        # Object nodes corresponding to default values
-        default_nodes, null_defaults = self._process_default_args(
-            arg_names,
+        # Namespace entities corresponding to default values
+        default_entities, null_defaults = self._process_default_args(
+            pos_params,
             parameters.defaults,
             namespace
         )
-        kw_default_nodes, null_kw_defaults = self._process_default_args(
-            kwonlyarg_names,
+        kw_default_entities, null_kw_defaults = self._process_default_args(
+            kw_params,
             parameters.kw_defaults,
             namespace
         )
 
-        # Consolidates arg names
-        if parameters.vararg:
-            arg_names.append(parameters.vararg.arg)
-        arg_names.extend(kwonlyarg_names)
-        if parameters.kwarg:
-            arg_names.append(parameters.kwarg.arg)
-
         # Update namespace with default values
-        namespace = {**namespace, **default_nodes, **kw_default_nodes}
+        namespace = {**namespace, **default_entities, **kw_default_entities}
         for null_arg_name in null_defaults + null_kw_defaults:
             if null_arg_name in namespace:
                 del namespace[null_arg_name]
                 delete_sub_aliases(null_arg_name, namespace)
 
-        # Iterates through arguments in order they were passed into function
         for index, argument in enumerate(arguments):
-            if not argument.arg_name:
-                arg_name = arg_names[index]
-            else:
+            if argument.arg_name == '': # Positional argument
+                if index < len(pos_params):
+                    arg_name = pos_params[index]
+                else: # Star argument
+                    self._process_attribute_chain(argument.arg_val)
+                    continue
+            elif argument.arg_name is not None: # Keyword argument
                 arg_name = argument.arg_name
+                if arg_name not in pos_params + kw_params: # **kwargs
+                    self._process_attribute_chain(argument.arg_val)
+                    continue
+            else: # **kwargs
+                self._process_attribute_chain(argument.arg_val)
+                continue
 
-            arg_node, _ = self._process_attribute_chain(argument.arg_val)
-            if not arg_node:
+            arg_entity, _ = self._process_attribute_chain(argument.arg_val)
+            if not arg_entity:
                 if arg_name in namespace:
                     del namespace[arg_name]
                     delete_sub_aliases(arg_name, namespace)
@@ -609,11 +598,16 @@ class Saplings(ast.NodeVisitor):
                 continue
 
             delete_sub_aliases(arg_name, namespace)
-            namespace[arg_name] = arg_node
+            namespace[arg_name] = arg_entity
 
-        # TODO (V1): Simply create ast.Assign objects for each default argument
-        # and prepend them to function.def_node.body –– let the Saplings instance
-        # below do the rest.
+        # TODO (V2): Handle star args and **kwargs (once data structures are
+        # handled)
+        if parameters.vararg and parameters.vararg.arg in namespace:
+            del namespace[parameters.vararg.arg]
+            delete_sub_aliases(parameters.vararg.arg, namespace)
+        if parameters.kwarg and parameters.kwarg.arg in namespace:
+            del namespace[parameters.kwarg.arg]
+            delete_sub_aliases(parameters.kwarg.arg, namespace)
 
         # Handles recursive functions by deleting all names of the function node
         for name, node in list(namespace.items()):
@@ -1101,7 +1095,6 @@ class Saplings(ast.NodeVisitor):
             self.visit(base_node)
 
         # TODO (V2): Handle metaclasses
-        # TODO (V2): Handle decorators
 
         def stringify_target(target):
             tokens = recursively_tokenize_node(target, tokens=[])
@@ -1282,11 +1275,14 @@ class Saplings(ast.NodeVisitor):
         )
 
     def visit_withitem(self, node):
-        assign_node = ast.Assign(
-            targets=[node.optional_vars],
-            value=node.context_expr
-        )
-        self.visit(assign_node)
+        if node.optional_vars:
+            assign_node = ast.Assign(
+                targets=[node.optional_vars],
+                value=node.context_expr
+            )
+            self.visit(assign_node)
+        else:
+            self.visit(node.context_expr)
 
     def visit_Continue(self, node):
         self._is_traversal_halted = True
