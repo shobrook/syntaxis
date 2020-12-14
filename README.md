@@ -457,7 +457,7 @@ Perceptron.loss = tensor()
 model.loss.item()
 ```
 
-Here, the change to the `loss` class variable will not propagate to `model`, an instance of `Perceptron`.
+Here, the change to `loss` won't propagate to `model`, an instance of `Perceptron`.
 
 #### Class Closures
 
