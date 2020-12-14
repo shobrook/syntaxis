@@ -218,7 +218,7 @@ print(y.max())
 ```
 
 <p align="center">
-  <img width="50%" src="img/if_else_1.png" />
+  <img width="40%" src="img/if_else_1.png" />
 </p>
 
 Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes:
@@ -315,7 +315,7 @@ for item in my_generator():
 Here, `__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like:
 
 <p align="center">
-  <img width="50%" src="img/generators.png" />
+  <img width="35%" src="img/generators.png" />
 </p>
 
 Notably, this limitation will only produce false negatives –– not false positives.
@@ -344,13 +344,13 @@ my_func().bar()
 saplings _should_ produce the following tree:
 
 <p align="center">
-  <img width="35%" src="img/decorators_1.png" />
+  <img width="25%" src="img/decorators_1.png" />
 </p>
 
 But because it doesn't apply `my_decorator` to `my_func`, `attr` isn't captured as an attribute of `module.foo`. Instead, this tree is produced:
 
 <p align="center">
-  <img width="35%" src="img/decorators_2.png" />
+  <img width="25%" src="img/decorators_2.png" />
 </p>
 
 As can be seen, this limitation can produce both type I and II errors. Notice, however, that saplings can handle the usage of user-defined decorators without the `@` "syntactic sugar," like so:
@@ -390,7 +390,7 @@ trans_diag(np.random.randn(5, 5))
 saplings will produce the following tree:
 
 <p align="center">
-  <img width="35%" src="img/anonymous.png" />
+  <img width="40%" src="img/anonymous.png" />
 </p>
 
 Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by saplings, but the assignment to `trans_diag` is not recognized, and therefore the function call is not processed.
