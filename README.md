@@ -5,7 +5,7 @@
 
 `saplings` is a static analysis tool for Python. Given a program, `saplings` will build object hierarchies for every module imported in the program. Object hierarchies are dependency trees where the root node represents a module and each child represents an attribute of its parent. These can be useful for making inferences about a module's API, mining patterns in how a module is used, and [duck typing](https://en.wikipedia.org/wiki/Duck_typing).
 
-<img src="./demo.gif" />
+<img src="img/demo.gif" />
 
 <!-- This library also provides simple methods for calculating software metrics, including:
 
@@ -126,7 +126,7 @@ my_obj == None # => my_obj.__eq__(None)
 
 ## Limitations
 
-Saplings _[statically analyzes](https://en.wikipedia.org/wiki/Static_program_analysis)_ the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. To demonstrate this idea, consider this example of [currying](https://en.wikipedia.org/wiki/Currying):
+Saplings _[statically analyzes](https://en.wikipedia.org/wiki/Static_program_analysis)_ the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. To demonstrate this idea, consider this example of [currying](https://en.wikipedia.org/wiki/Currying) and the tree saplings produces:
 
 ```python
 import torch
@@ -148,7 +148,7 @@ composed_func(torch.tensor())
 ```
 
 <p align="center">
-  <img width="25%" src="currying.png" />
+  <img width="25%" src="img/currying.png" />
 </p>
 
 Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
@@ -159,8 +159,15 @@ While saplings can track object flow through many complex paths in a program, I 
 
 As of right now, saplings can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
+```python
+import numpy as np
+
+vectors = [np.array([0]), np.array([1]), np.array([2])]
+vectors[0].mean()
+```
+
 <p align="center">
-  <img width="75%" src="data_structures.png" />
+  <img width="25%" src="img/data_structures.png" />
 </p>
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
@@ -181,7 +188,7 @@ for x in np.array([]):
 If `np.array([])` is an empty list, then the print statement, and therefore `x.mean()`, will never execute. In that situation, adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive. To handle this, `saplings` _should_ branch out and produce two possible trees for this module:
 
 <p align="center">
-  <img width="50%" src="for_loop.png" />
+  <img width="50%" src="img/for_loop.png" />
 </p>
 
 But as of right now, saplings will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
@@ -194,14 +201,30 @@ But as of right now, saplings will only produce the tree on the right –– tha
 
 We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in `if` blocks are the only changes assumed to persist into the parent scope, whereas changes in `elif` or `else` blocks do not persist. For example, consider the following:
 
+```python
+import numpy as np
+
+X = np.array([1, 2, 3])
+
+if condition:
+  X = np.matrix([1, 2, 3])
+else:
+  print(X.mean())
+  X = None
+  y = np.array([1, 2, 3])
+
+print(X.sum())
+print(y.max())
+```
+
 <p align="center">
-  <img width="75%" src="if_else.png" />
+  <img width="35%" src="img/if_else_1.png" />
 </p>
 
-Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes, like so:
+Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes:
 
 <p align="center">
-  <img width="65%" src="if_else_double_trees.png" />
+  <img width="65%" src="img/if_else_2.png" />
 </p>
 
 Our assumption applies to ternary expressions too. For example, the assignment `a = b.c if condition else b.d` is, under our assumption, equivalent to `a = b.c`.
@@ -271,7 +294,9 @@ output.attr()
 
 We know this function returns `some_module.foo`, but saplings cannot tell which base case is hit, and therefore can't track the output. To avoid false positives, we assume this function returns nothing, and thus `attr` will not be captured and added to the object hierarchy. The tree saplings produces is:
 
-<!--Add visualization-->
+<p align="center">
+  <img width="35%" src="img/recursion.png" />
+</p>
 
 #### Generators
 
@@ -289,9 +314,11 @@ for item in my_generator():
 
 Here, `__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like:
 
-<!--Add visualization-->
+<p align="center">
+  <img width="25%" src="img/generators.png" />
+</p>
 
-Notably, this limitation will only produce false negatives (i.e. failing to add objects to the hierarchy), not false positives (i.e. adding the wrong objects to the hierarchy).
+Notably, this limitation will only produce false negatives –– not false positives.
 
 #### Decorators
 
