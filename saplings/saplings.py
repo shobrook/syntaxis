@@ -3,14 +3,6 @@ import ast
 from collections import defaultdict
 from copy import copy
 
-# TODO (V1): Write/Update docstrings
-    # Use vocabulary like "containing scope" instead of parent scope, and
-    # "objects with local scope die as soon as the function exits, unless
-    # they're returned"
-
-    # Explain how "attribute chains" and "object flow" are key to understanding
-    # how this all works
-
 
 ####################
 # NAMESPACE ENTITIES
@@ -786,6 +778,10 @@ class Saplings(ast.NodeVisitor):
                 del self._namespace[""]
 
             return return_value
+
+        print(attribute_chain)
+        print(self._namespace)
+        print()
 
         current_entity = None
         current_instance = {"entity": None, "init_index": 0}
