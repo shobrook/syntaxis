@@ -407,7 +407,7 @@ class Perceptron(nn.Module):
   loss = None
 
   def __init__(self, in_channels, out_channels):
-    super(NeuralNet, self).__init__()
+    super(Perceptron, self).__init__()
     self.layer = nn.Linear(in_channels, out_channels)
     self.output = Perceptron.create_output_layer()
 
@@ -436,38 +436,65 @@ loss = Perceptron.calculate_loss(output, 8)
   <img width="50%" src="img/class.png" />
 </p>
 
-However, there is some functionality with classes that has yet to be implemented.
+While saplings can handle many common usages of user-defined classes, such as the ones above, there is some functionality that has yet to be implemented. Below are all the limitations I'm aware of:
 
-#### Propagating changes to class variables to class instances
+#### Class Variables
+
+In the example above, calling the class method `Perceptron.calculate_loss` should change the value of the class variable `loss` from `None`. However, saplings cannot track modifications to a class when it's passed into a function. But saplings _can_ handle when a class is modified in the scope in which it was defined, like so:
 
 ```python
-Perceptron.loss.item() # Works
-model.loss.item() # Doesn't work
+Perceptron.loss = tensor()
+Perceptron.loss.item()
 ```
+
+Here, `item` would be captured and added to the tree as an attribute of `tensor`.
+
+Saplings also can't propagate class variable changes to existing instances of the class. For example, continuing the code above:
+
+```python
+model = Perceptron(1, 8)
+Perceptron.loss = tensor()
+model.loss.item()
+```
+
+Here, the change to the `loss` class variable will not propagate to `model`, an instance of `Perceptron`.
 
 #### Class Closures
 
-i.e. functions that return a class
+TODO<!--They work, but the class isn't bound to the namespace in which it was defined.-->
+
+#### Nested Classes
+
+TODO
 
 #### Inheritance
 
-If you have:
-```python
-import module
+Saplings cannot recognize inherited methods or variables in user-defined classes. For example, given:
 
-class MyClass(module.blah):
-  def __init__(self, input):
-    x = self.parent_func(input)
-    self.y = x + 10
+```python
+import some_module
+
+class MyClass(module.Foo):
+  def __init__(self, x):
+    self.bar(x)
 ```
 
-Then `module.blah.parent_func` will not be captured. In other words, inheritance is ignored.
-`super()` doesn't do shit.
+saplings will not recognize `bar` as an attribute of `module.Foo`, despite `bar` being an inherited method. This limitation also holds true when the base class is user-defined.
 
 #### Metaclasses
+
+TODO
+
+#### Class Closures
+
+TODO
 
 ### Miscellaneous
 
 #### `global` statements
 
+TODO
+
 #### `eval`, `nonlocals`, and other built-in functions
+
+TODO
