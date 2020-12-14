@@ -79,7 +79,7 @@ numpy (NC, -1)
      +-- T (NC, 1)
 ```
 
-Here, `NC` means indicates a non-callable node and `C` a callable node. `-1`/`0`/`1` indicate the order of the node's connection to its parent.
+(Here, `NC` means indicates a non-callable node and `C` a callable node. `-1`/`0`/`1` indicate the order of the node's connection to its parent).
 
 To create a dictionary representation of a tree, pass its root node into the `dictify_tree` function, like so:
 
@@ -109,9 +109,9 @@ Each node is an _object_ and an object can either be _callable_ (i.e. has `__cal
 ```python
 my_parent = module.my_obj
 
-my_parent.my_attr # my_attr is a 0th-order child of my_obj
-my_parent().T # my_attr is a 1st-order child of my_obj
-my_parent()().T # my_attr is a 2nd-order child of my_obj
+my_parent.attr # attr is a 0th-order child of my_obj
+my_parent().attr # attr is a 1st-order child of my_obj
+my_parent()().attr # attr is a 2nd-order child of my_obj
 ```
 
 #### What counts as a function?
@@ -126,10 +126,29 @@ my_obj == None # => my_obj.__eq__(None)
 
 ## Limitations
 
-Saplings _statically_ analyzes the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. Consider this example of currying:
+Saplings _[statically analyzes](https://en.wikipedia.org/wiki/Static_program_analysis)_ the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via assignments and calls of user-defined functions and classes. To demonstrate this idea, consider this example of [currying](https://en.wikipedia.org/wiki/Currying):
+
+```python
+import torch
+
+def compose(g, f):
+  def h(x):
+    return g(f(x))
+
+  return h
+
+def F(x):
+  return x.T
+
+def G(x):
+  return x.sum()
+
+composed_func = compose(F, G)
+composed_func(torch.tensor())
+```
 
 <p align="center">
-  <img width="75%" src="currying.png" />
+  <img width="25%" src="currying.png" />
 </p>
 
 Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
@@ -146,7 +165,7 @@ As of right now, saplings can't track _assignments_ to comprehensions, generator
 
 Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
 
-Notably, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are considered to return tuples, and hence won't be tracked by saplings. <!--Mention star args?-->
+Notably, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are considered to return tuples, and hence won't be tracked by saplings. The same logic applies to variable unpacking with `*` and `**`.
 
 ### Control Flow
 
@@ -320,7 +339,7 @@ Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `di
 
 ### Classes
 
-Saplings can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, and classes defined within classes. Notably, it can keep track of the state of each instance of a user-defined class. Consider this example:
+Saplings can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, and classes defined within classes. Notably, it can keep track of the state of each instance of a user-defined class. Consider the following program and the tree saplings produces:
 
 ```python
 import torch.nn as nn
@@ -354,6 +373,8 @@ model = Perceptron(1, 8)
 output = model(tensor([10]))
 loss = Perceptron.calculate_loss(output, 8)
 ```
+
+
 
 However, there is some functionality with classes that has yet to be implemented.
 
