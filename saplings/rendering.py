@@ -11,7 +11,7 @@ def render_tree(node, level=0):
     if not level:
         pre = ""
     else:
-        pre = " " +  INDENT * (level - 1) + HORIZ_EDGE + " "
+        pre = " " + INDENT * (level - 1) + HORIZ_EDGE + " "
 
     tree_repr = [(pre, node)]
     for i, child in enumerate(node.children):
