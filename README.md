@@ -104,7 +104,7 @@ dictify_tree(root_node)
 
 ### Interpreting the Object Hierarchy
 
-Each node is an _object_ and an object can either be _callable_ (i.e. has `__call__` defined) or _non-callable_. Connections between nodes each have an _order_ –– a number which describes the relationship between a node and its parent. If a node is a 0th-order child of its parent object, then it's an attribute of that object. If it's a 1st-order child, then it's an attribute of the output of the parent object when it's called. For example:
+Each node is an _object_ and an object can either be _callable_ (i.e. has `__call__` defined) or _non-callable_. Links between nodes each have an _order_ –– a number which describes the relationship between a node and its parent. If a node is a 0th-order child of its parent object, then it's an attribute of that object. If it's a 1st-order child, then it's an attribute of the output of the parent object when it's called, and so on. For example:
 
 ```python
 my_parent = module.my_obj
@@ -153,7 +153,7 @@ composed_func(torch.tensor())
 
 Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
 
-While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Below is a list of all the failure modes I'm aware of (and currently working on fixing). If you discover a bug or missing feature that isn't listed here, please create an issue for it so I can add it to this list and work on fixing it.
+While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Below is a list of all the failure modes I'm aware of (and currently working on fixing). If you discover a bug or missing feature that isn't listed here, please create an issue for it.
 
 ### Data Structures
 
@@ -166,13 +166,13 @@ vectors = [np.array([0]), np.array([1]), np.array([2])]
 vectors[0].mean()
 ```
 
+Saplings can capture `array` and add it to the `numpy` object hierarchy, but it cannot capture `mean`, and thus produces the following tree:
+
 <p align="center">
   <img width="25%" src="img/data_structures.png" />
 </p>
 
-Here, `mean` would not be captured and added to the `numpy` object hierarchy, but `array` would.
-
-Notably, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are considered to return tuples, and hence won't be tracked by saplings. The same logic applies to variable unpacking with `*` and `**`.
+This limitation can have some unexpected consequences. For example, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are actually returning tuples. Therefore, the output of those functions won't be tracked by saplings. The same logic applies to variable unpacking with `*` and `**`.
 
 ### Control Flow
 
@@ -185,7 +185,7 @@ for x in np.array([]):
   print(x.mean())
 ```
 
-If `np.array([])` is an empty list, then the print statement, and therefore `x.mean()`, will never execute. In that situation, adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive. To handle this, `saplings` _should_ branch out and produce two possible trees for this module:
+Because saplings only does _static_ analysis, it doesn't know that `np.array([])` is an empty list, and that therefore the loop never executes. In this situation, capturing `mean` and adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive, since `x` (i.e. the output of `np.array().__index__()`) is never defined. To handle this, saplings _should_ branch out and produce two possible trees for this module –– one that assumes the loop doesn't execute, and one that assumes it does:
 
 <p align="center">
   <img width="50%" src="img/for_loop.png" />
@@ -193,13 +193,15 @@ If `np.array([])` is an empty list, then the print statement, and therefore `x.m
 
 But as of right now, saplings will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
 
+Below are the assumptions saplings makes for other control flow elements.
+
 #### `while` loops
 
 `while` loops are processed under the same assumption as `for` loops –– that is, the body of the loop is assumed to execute.
 
 #### `if`/`else` blocks
 
-We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in `if` blocks are the only changes assumed to persist into the parent scope, whereas changes in `elif` or `else` blocks do not persist. For example, consider the following:
+We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in `if` blocks are the only changes assumed to persist into the parent scope, whereas changes in `elif` or `else` blocks do not persist. For example, given:
 
 ```python
 import numpy as np
@@ -217,11 +219,13 @@ print(X.sum())
 print(y.max())
 ```
 
+saplings will produce the following tree:
+
 <p align="center">
   <img width="40%" src="img/if_else_1.png" />
 </p>
 
-Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then the `sum` node would be a false positive and the exclusion of the `max` node would be a false negative. Ideally, saplings would branch out and produce two separate trees for this module –– one for when `if` block executes and the other for when the `else` executes:
+Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then including the `sum` node would be a false positive and excluding the `max` node would be a false negative. Ideally, saplings should branch out and produce two separate trees for this module –– one that assumes the `if` block executes and another that assumes the `else` block executes:
 
 <p align="center">
   <img width="65%" src="img/if_else_2.png" />
@@ -231,7 +235,7 @@ Our assumption applies to ternary expressions too. For example, the assignment `
 
 #### `try`/`except` blocks
 
-`try` blocks are assumed to always execute, without throwing an exception, and the `except` block is assumed not to execute. Like with `if`/`else` blocks, this assumption does not the `except` body is ignored. Object flow is still tracked inside the `except` block, but any changes made to the namespace within this block do not persist outside that scope.
+`try` blocks are assumed to always execute, without throwing an exception, and the `except` block is assumed never to execute. Like with `if`/`else` blocks, this assumption does not mean object flow _within_ the `except` body is ignored. Assignments and function calls are still tracked inside the `except` block, but any changes to the namespace made within this block do not persist into the outer scope.
 
 #### `return`, `break`, and `continue` statements
 
@@ -246,7 +250,7 @@ for x in range(10):
   y.mean()
 ```
 
-It may be the case that `mean` is actually an attribute of `np.array`, but saplings will not capture this since `y.mean()` would never be executed.
+It may be the case that `mean` is actually an attribute of `np.array`, but saplings will not capture this since `y.mean()` is never executed.
 
 ### Functions
 
@@ -300,7 +304,7 @@ We know this function returns `some_module.foo`, but saplings cannot tell which 
 
 #### Generators
 
-Generators aren't processed as iterables. Instead, saplings ignores `yield`/`yield from` statements and treats the generator like a normal function. For example:
+Generators aren't processed as iterables. Instead, saplings ignores `yield`/`yield from` statements and treats the generator like a normal function. For example, given:
 
 ```python
 import some_module
@@ -312,7 +316,7 @@ for item in my_generator():
   print(item.name)
 ```
 
-Here, `__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like:
+`__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like this:
 
 <p align="center">
   <img width="35%" src="img/generators.png" />
