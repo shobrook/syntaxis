@@ -10,22 +10,19 @@ from copy import copy
 
 
 class ObjectNode(object):
+    """
+    Object hierarchy node. Represents an object that's descendant of an imported
+    module –– descendant meaning there exists an "attribute chain" between the
+    module and the object.
+    """
+
     def __init__(self, name, is_callable=False, order=0, children=[]):
-        """
-        Module tree node constructor. Each node represents a feature in a
-        package's API. A feature is defined as an object, function, or variable
-        that can only be used by importing the package.
-
-        @param id: original identifier for the node.
-        @param children: connected sub-nodes.
-        """
-
-        self.name = str(name)
+        self.name = name
         self.is_callable = is_callable
         self.order = order
         self.children = []
 
-        self.count = 1
+        self.count = 1 # TODO (V1): Implement frequency analysis
 
         for child in children:
             self.add_child(child)
@@ -53,7 +50,6 @@ class ObjectNode(object):
     def add_child(self, node):
         for child in self.children:
             if child == node: # Child already exists
-                # child.increment_count()
                 return child
 
         self.children.append(node)
@@ -69,24 +65,82 @@ class ObjectNode(object):
 
 
 class Function(object):
+    """
+    Represents a user-defined function.
+    """
+
     def __init__(self, def_node, init_namespace, is_closure=False, called=False, method_type=None, containing_class=None):
+        """
+        Parameters
+        ----------
+        def_node : ast.FunctionDef
+        init_namespace : dict
+            namespace in which the function was defined
+        is_closure : bool
+            indicates whether the function is a closure
+        called : bool
+            indicates whether the function has been called
+        method_type : {string, None}
+            if the function was defined inside a class, this indicates the type
+            of method it is (e.g. instance, class, or static); None for
+            non-methods
+        containing_class : {Class, None}
+            if the function was defined inside a class, this is the object
+            representing that class entity
+        """
+
         self.def_node = def_node
         self.init_namespace = init_namespace
         self.is_closure = is_closure
         self.called = called
         self.method_type = method_type
-        self.containing_class = containing_class # TEMP
+        self.containing_class = containing_class
 
 
+# TODO (V1): When a class is identified as a closure, set `is_closure` to True
+# on all of its methods
 class Class(object):
-    def __init__(self, def_node, init_namespace, is_closure=False):
+    """
+    Represents a user-defined class.
+    """
+
+    def __init__(self, def_node, init_namespace, init_instance_namespace={}, is_closure=False):
+        """
+        Parameters
+        ----------
+        def_node : ast.ClassDef
+        init_namespace : dict
+            namespace in which the class is defined
+        init_instance_namespace : dict
+            namespace containing the methods and variables defined inside the
+            class; everything in this namespace is an attribute of `self`
+        is_closure : bool
+            indicates whether the class is a closure (i.e. defined and returned
+            inside a function)
+        """
+
         self.def_node = def_node
-        self.init_namespace = init_namespace
+        self.init_namespace = init_namespace # QUESTION: Needed? The methods will have the same init_namespace
+        self.init_instance_namespace = init_instance_namespace
         self.is_closure = is_closure
 
 
 class ClassInstance(object):
+    """
+    Represents an instance of a user-defined class.
+    """
+
     def __init__(self, class_entity, namespace):
+        """
+        Parameters
+        ----------
+        class_entity : Class
+            class entity for which this is an instance of
+        namespace : dict
+            namespace/state of the instance (everything here is an attribute of
+            `self`)
+        """
+
         self.class_entity = class_entity
         self.namespace = namespace
 
@@ -158,6 +212,15 @@ COMPARE_OPS_TO_FUNCS = {
 
 
 def tokenize_slice(slice):
+    """
+    Helper function (generator) for tokenizing subscripts.
+
+    Parameters
+    ----------
+    slice : {ast.Index, ast.Slice}
+        subscript arguments
+    """
+
     if isinstance(slice, ast.Index): # e.g. x[1]
         yield recursively_tokenize_node(slice.value, [])
     elif isinstance(slice, ast.Slice): # e.g. x[1:2]
@@ -618,6 +681,9 @@ class Saplings(ast.NodeVisitor):
         # defined in the current scope by adding it to self._functions
         if isinstance(return_value, Function):
             return_value.is_closure = True
+            # TODO (V1): What if the function is defined in an outer scope but
+            # returned in this scope? Then it's not a closure. Handle these.
+
             if not return_value.called:
                 self._functions.add(return_value)
 
@@ -778,10 +844,6 @@ class Saplings(ast.NodeVisitor):
                 del self._namespace[""]
 
             return return_value
-
-        print(attribute_chain)
-        print(self._namespace)
-        print()
 
         current_entity = None
         current_instance = {"entity": None, "init_index": 0}
@@ -1212,6 +1274,7 @@ class Saplings(ast.NodeVisitor):
                 ctx=ast.Load()
             )
         )
+        # TODO (V1): Change this to be __iter__ not __index__
         self.visit(ast.Module(body=[target_assignment] + node.body))
 
         if not self._is_traversal_halted:
