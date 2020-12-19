@@ -1300,6 +1300,22 @@ class Saplings(ast.NodeVisitor):
 
         self.visit(ast.Module(body=node.body))
 
+    def visit_IfExp(self, node):
+        """
+        """
+
+        self.visit(node.test)
+        self._process_subtree_in_new_scope(
+            node.orelse,
+            self._namespace.copy()
+        )
+        self.visit(node.body)
+
+        # tokens = recursively_tokenize_node(node.body, [])
+        # entity, instance =  self._process_attribute_chain(tokens)
+        #
+        # return (entity, instance)
+
     def visit_For(self, node):
         """
         Parameters
