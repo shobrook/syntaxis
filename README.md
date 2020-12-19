@@ -429,9 +429,9 @@ Once I learn what metaclasses actually are and how to use them, I'll get around 
 
 #### `global` statements
 
-TODO
+TODO: Explain this
 
 #### `eval`, `nonlocals`, and other built-in functions
 
-TODO
-Instantiating a class with the `type` function.
+TODO: Explain this
+<!--Instantiating a class with the `type` function.-->
