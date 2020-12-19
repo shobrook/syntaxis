@@ -97,14 +97,12 @@ class Function(object):
         self.containing_class = containing_class
 
 
-# TODO (V1): When a class is identified as a closure, set `is_closure` to True
-# on all of its methods
 class Class(object):
     """
     Represents a user-defined class.
     """
 
-    def __init__(self, def_node, init_namespace, init_instance_namespace={}, is_closure=False):
+    def __init__(self, def_node, init_namespace, init_instance_namespace={}):
         """
         Parameters
         ----------
@@ -114,15 +112,11 @@ class Class(object):
         init_instance_namespace : dict
             namespace containing the methods and variables defined inside the
             class; everything in this namespace is an attribute of `self`
-        is_closure : bool
-            indicates whether the class is a closure (i.e. defined and returned
-            inside a function)
         """
 
         self.def_node = def_node
         self.init_namespace = init_namespace # QUESTION: Needed? The methods will have the same init_namespace
         self.init_instance_namespace = init_instance_namespace
-        self.is_closure = is_closure
 
 
 class ClassInstance(object):
@@ -686,6 +680,12 @@ class Saplings(ast.NodeVisitor):
 
             if not return_value.called:
                 self._functions.add(return_value)
+        elif isinstance(return_value, Class):
+            for name, entity in return_value.init_instance_namespace.items():
+                if isinstance(entity, Function):
+                    entity.is_closure = True
+                    if not entity.called:
+                        self._functions.add(entity)
 
         return return_value, func_saplings
 
@@ -718,7 +718,7 @@ class Saplings(ast.NodeVisitor):
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
         # alias for bar().
 
-        # TODO (V2): Handle assignments to class variables that propagate to
+        # TODO (V1): Handle assignments to class variables that propagate to
         # class instances (e.g. MyClass.variable = ...; my_instance.variable.foo())
         if instance["entity"]:
             namespace = instance["entity"].namespace
@@ -890,9 +890,8 @@ class Saplings(ast.NodeVisitor):
                     # Process instantiation of user-defined class
 
                     # TODO (V1): Handle classes defined inside a class
-                    # TODO (V2) Handle functions that return a class (i.e. class closures)
 
-                    init_namespace = current_entity.init_namespace
+                    init_namespace = current_entity.init_instance_namespace
                     class_instance = ClassInstance(
                         current_entity,
                         init_namespace.copy()
@@ -963,7 +962,7 @@ class Saplings(ast.NodeVisitor):
                         self._process_attribute_chain(arg_token.arg_val)
             elif not isinstance(token, NameToken): # token is ast.AST node
                 self.visit(token)
-                # TODO (V2): Handle the following: (lambda x: x.attr)(module.foo)
+                # TODO (V1): Handle the following: (lambda x: x.attr)(module.foo)
                 break_and_process_nested_chains(
                     attribute_chain[index + 1:],
                     current_entity,
@@ -1100,7 +1099,7 @@ class Saplings(ast.NodeVisitor):
             type_comment : string containing the PEP 484 type comment
         """
 
-        # TODO (V2): Handle decorators
+        # TODO (V1): Handle decorators
 
         # NOTE: namespace is only used if the function is never called or if its
         # a closure
@@ -1136,7 +1135,7 @@ class Saplings(ast.NodeVisitor):
 
         self._process_subtree_in_new_scope(node.body, namespace)
 
-        # TODO (V2): Handle assignments to lambdas and lambda function calls
+        # TODO (V1): Handle assignments to lambdas and lambda function calls
 
     def visit_Return(self, node):
         if node.value:
@@ -1199,7 +1198,7 @@ class Saplings(ast.NodeVisitor):
             self._namespace.copy()
         )._namespace
 
-        class_entity = Class(node, {}, is_closure=False)
+        class_entity = Class(node, self._namespace.copy())
         self._namespace[node.name] = class_entity
 
         static_variable_map = {}
@@ -1223,7 +1222,7 @@ class Saplings(ast.NodeVisitor):
             method_map[method_name] = function
 
         # Everything here is an attribute of `self`
-        class_entity.init_namespace = {**static_variable_map, **method_map}
+        class_entity.init_instance_namespace = {**static_variable_map, **method_map}
 
     ## Control Flow Handlers ##
 
