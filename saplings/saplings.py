@@ -353,6 +353,17 @@ def delete_sub_aliases(targ_str, namespace):
                 break
 
 
+def create_decorator_call_node(decorator_list, args):
+    if not decorator_list:
+        return args
+
+    decorator = decorator_list.pop()
+    return create_decorator_call_node(
+        decorator_list,
+        ast.Call(func=decorator, args=[args], keywords=[])
+    )
+
+
 def consolidate_call_nodes(node, parent=None):
     for child in node.children:
         consolidate_call_nodes(child, node)
@@ -961,7 +972,9 @@ class Saplings(ast.NodeVisitor):
                         self._process_attribute_chain(arg_token.arg_val)
             elif not isinstance(token, NameToken): # token is ast.AST node
                 self.visit(token)
+
                 # TODO (V1): Handle the following: (lambda x: x.attr)(module.foo)
+                # TODO (V1): Handle IfExps
                 break_and_process_nested_chains(
                     attribute_chain[index + 1:],
                     current_entity,
@@ -1098,8 +1111,6 @@ class Saplings(ast.NodeVisitor):
             type_comment : string containing the PEP 484 type comment
         """
 
-        # TODO (V1): Handle decorators
-
         # NOTE: namespace is only used if the function is never called or if its
         # a closure
         function = Function(
@@ -1110,6 +1121,23 @@ class Saplings(ast.NodeVisitor):
         )
         self._namespace[node.name] = function
         self._functions.add(function)
+
+        if node.decorator_list:
+            decorator_call_node = create_decorator_call_node(
+                node.decorator_list,
+                ast.Name(node.name)
+            )
+            tokens = recursively_tokenize_node(decorator_call_node, [])
+            entity, _ = self._process_attribute_chain(tokens)
+
+            if not entity:
+                return function
+
+            self._namespace[node.name] = entity
+            if isinstance(entity, Function):
+                self._functions.add(entity)
+
+            return entity
 
         return function
 
