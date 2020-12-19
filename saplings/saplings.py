@@ -443,7 +443,8 @@ class Saplings(ast.NodeVisitor):
     def _process_subtree_in_new_scope(self, tree, namespace):
         """
         Used to process a subtree in a different scope/namespace from the
-        current scope.
+        current scope. Can act as a "sandbox," where changes to the namespace
+        don't affect the containing scope.
 
         Parameters
         ----------
@@ -889,8 +890,6 @@ class Saplings(ast.NodeVisitor):
                 elif isinstance(current_entity, Class):
                     # Process instantiation of user-defined class
 
-                    # TODO (V1): Handle classes defined inside a class
-
                     init_namespace = current_entity.init_instance_namespace
                     class_instance = ClassInstance(
                         current_entity,
@@ -1148,8 +1147,8 @@ class Saplings(ast.NodeVisitor):
         """
         """
 
-        for base_node in node.bases: # TODO (V2): Handle inheritance (?)
-            self.visit(base_node)
+        for base_node in node.bases: # TODO (V2): Handle inheritance
+            self.visit(base_node) # TODO (V1): Make these nodes callable
 
         # TODO (V2): Handle metaclasses
 
@@ -1159,8 +1158,8 @@ class Saplings(ast.NodeVisitor):
 
             return targ_str
 
-        methods, static_variables = [], []
-        body_without_methods = []
+        methods, nested_classes, static_variables = [], [], []
+        body_without_methods_and_nested_classes = []
         for n in node.body:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for decorator in n.decorator_list:
@@ -1174,6 +1173,9 @@ class Saplings(ast.NodeVisitor):
                     n.method_type = "instance"
 
                 methods.append(n)
+                continue
+            elif isinstance(n, ast.ClassDef):
+                nested_classes.append(n)
                 continue
             elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
                 # BUG: Static variables can be defined without an assignment.
@@ -1191,10 +1193,10 @@ class Saplings(ast.NodeVisitor):
                     else:
                         static_variables.append(stringify_target(target))
 
-            body_without_methods.append(n)
+            body_without_methods_and_nested_classes.append(n)
 
         class_level_namespace = self._process_subtree_in_new_scope(
-            ast.Module(body=body_without_methods),
+            ast.Module(body=body_without_methods_and_nested_classes),
             self._namespace.copy()
         )._namespace
 
@@ -1207,22 +1209,41 @@ class Saplings(ast.NodeVisitor):
                 self._namespace['.'.join((node.name, name))] = n
                 static_variable_map[name] = n
 
-        method_map = {}
-        for method in methods:
-            method_name = method.name
+        def create_callable_attribute_map(callables):
+            callable_map = {}
+            for callable in callables:
+                callable_name = callable.name
 
-            # Handles methods that are accessed by the enclosing class
-            adjusted_name = '.'.join((node.name, method_name))
-            method.name = adjusted_name
-            function = self.visit_FunctionDef(method)
-            method.name = method_name
+                # Handles callables that are accessed by the enclosing class
+                adjusted_name = '.'.join((node.name, callable_name))
+                callable.name = adjusted_name
 
-            function.method_type = method.method_type
-            function.containing_class = class_entity
-            method_map[method_name] = function
+                if isinstance(callable, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    entity = self.visit_FunctionDef(callable)
+                elif isinstance(callable, ast.ClassDef):
+                    entity = self.visit_ClassDef(callable)
+
+                callable.name = callable_name
+
+                if isinstance(entity, Function):
+                    entity.method_type = callable.method_type
+                    entity.containing_class = class_entity
+
+                callable_map[callable_name] = entity
+
+            return callable_map
+
+        method_map = create_callable_attribute_map(methods)
+        nested_class_map = create_callable_attribute_map(nested_classes)
 
         # Everything here is an attribute of `self`
-        class_entity.init_instance_namespace = {**static_variable_map, **method_map}
+        class_entity.init_instance_namespace = {
+            **static_variable_map,
+            **method_map,
+            **nested_class_map
+        }
+
+        return class_entity
 
     ## Control Flow Handlers ##
 
