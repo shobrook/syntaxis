@@ -973,8 +973,8 @@ class Saplings(ast.NodeVisitor):
             elif not isinstance(token, NameToken): # token is ast.AST node
                 self.visit(token)
 
-                # TODO (V1): Handle the following: (lambda x: x.attr)(module.foo)
-                # TODO (V1): Handle IfExps
+                # TODO (V1): Handle IfExps and Lambdas (e.g. (lambda x: x.attr)(module.foo))
+
                 break_and_process_nested_chains(
                     attribute_chain[index + 1:],
                     current_entity,
@@ -1176,7 +1176,7 @@ class Saplings(ast.NodeVisitor):
         """
 
         for base_node in node.bases: # TODO (V2): Handle inheritance
-            self.visit(base_node) # TODO (V1): Make these nodes callable
+            self.visit(ast.Call(func=base_node, args=[], keywords=[]))
 
         # TODO (V2): Handle metaclasses
 
@@ -1478,10 +1478,6 @@ class Saplings(ast.NodeVisitor):
 
     def visit_DictComp(self, node):
         self._comprehension_helper([node.key, node.value], node.generators)
-
-    ## Miscellaneous ##
-
-    # TODO (V1): Handle ifexps
 
     ## Public Methods ##
 
