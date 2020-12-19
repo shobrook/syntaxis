@@ -324,62 +324,6 @@ for item in my_generator():
 
 Notably, this limitation will only produce false negatives –– not false positives.
 
-#### Decorators
-
-Saplings doesn't process the application of decorators, and thus assumes that user-defined decorators do not extend the functionality of the functions they're applied to. For example, given:
-
-```python
-import some_module
-
-def my_decorator(func):
-  def wrapper():
-    output = func()
-    return output.attr
-
-  return wrapper
-
-@my_decorator
-def my_func():
-  return some_module.foo
-
-my_func().bar()
-```
-
-saplings _should_ produce the following tree:
-
-<p align="center">
-  <img width="25%" src="img/decorators_1.png" />
-</p>
-
-But because it doesn't apply `my_decorator` to `my_func`, `attr` isn't captured as an attribute of `module.foo`. Instead, this tree is produced:
-
-<p align="center">
-  <img width="25%" src="img/decorators_2.png" />
-</p>
-
-As can be seen, this limitation can produce both type I and II errors. Notice, however, that saplings can handle the usage of user-defined decorators without the `@` "syntactic sugar," like so:
-
-```python
-def my_func():
-  return module.foo
-
-my_func = my_decorator(my_func)
-```
-
-Saplings also assumes that decorators defined by imported modules don't modify the user-defined functions they're applied to. For example:
-
-```python
-import some_module
-
-@some_module.some_decorator
-def my_func():
-  return some_module.foo
-
-my_func().bar()
-```
-
-Here, `foo` is treated as an undecorated function, and thus saplings produces the same tree as above.
-
 #### Anonymous Functions
 
 While the _bodies_ of anonymous (`lambda`) functions are processed, object flow through assignments and calls of those functions is not tracked. For example, given:
@@ -401,7 +345,7 @@ Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `di
 
 ### Classes
 
-Saplings can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, and classes defined within classes. Notably, it can keep track of the state of each instance of a user-defined class. Consider the following program and the tree saplings produces:
+Saplings can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, classes defined within classes, and class closures (i.e. functions that return classes). Notably, it can keep track of the state of each instance of a user-defined class. Consider the following program and the tree saplings produces:
 
 ```python
 import torch.nn as nn
@@ -440,11 +384,11 @@ loss = Perceptron.calculate_loss(output, 8)
   <img width="50%" src="img/class.png" />
 </p>
 
-While saplings can handle many common usages of user-defined classes, such as the ones above, there is some functionality that has yet to be implemented. Below are all the limitations I'm aware of:
+While saplings can handle many common usage patterns for user-defined classes, such as the ones above, there are some things saplings can't handle yet. Below are all the limitations I'm aware of:
 
 #### Class Variables
 
-In the example above, calling the class method `Perceptron.calculate_loss` should change the value of the class variable `loss` from `None`. However, saplings cannot track modifications to a class when it's passed into a function. But saplings _can_ handle when a class is modified in the scope in which it was defined, like so:
+In the example above, calling the class method `Perceptron.calculate_loss` should change the value of the class variable `loss`. However, saplings cannot track modifications to a class when it's passed into a function. Saplings _can_ handle when a class is modified in the scope in which it was defined, like so:
 
 ```python
 Perceptron.loss = tensor()
@@ -461,15 +405,7 @@ Perceptron.loss = tensor()
 model.loss.item()
 ```
 
-Here, the change to `loss` won't propagate to `model`, an instance of `Perceptron`.
-
-#### Class Closures
-
-TODO<!--They work, but the class isn't bound to the namespace in which it was defined.-->
-
-#### Nested Classes
-
-TODO
+Because the change to `loss`, a class variable, won't propagate to `model`, an instance of `Perceptron`, `item` won't be captured as an attribute of `tensor`.
 
 #### Inheritance
 
@@ -487,11 +423,7 @@ saplings will not recognize `bar` as an attribute of `module.Foo`, despite `bar`
 
 #### Metaclasses
 
-TODO
-
-#### Class Closures
-
-TODO
+Once I learn what metaclasses actually are and how to use them, I'll get around to handling them in saplings. But for now this is on the bottom of my to-do list since 99.9% of Python users also don't know what metaclasses are or how to use them.
 
 ### Miscellaneous
 
@@ -502,3 +434,4 @@ TODO
 #### `eval`, `nonlocals`, and other built-in functions
 
 TODO
+Instantiating a class with the `type` function.
