@@ -22,7 +22,7 @@ class ObjectNode(object):
         self.order = order
         self.children = []
 
-        self.count = 1 # TODO (V1): Implement frequency analysis
+        self.frequency = 1
 
         for child in children:
             self.add_child(child)
@@ -45,11 +45,12 @@ class ObjectNode(object):
     ## Instance Methods ##
 
     def increment_count(self):
-        self.count += 1
+        self.frequency += 1
 
     def add_child(self, node):
         for child in self.children:
             if child == node: # Child already exists
+                child.increment_count()
                 return child
 
         self.children.append(node)
@@ -469,6 +470,12 @@ class Saplings(ast.NodeVisitor):
 
     ## Processors ##
 
+    def _process_node(self, node):
+        tokenized_node = recursively_tokenize_node(node, [])
+        entity, instance = self._process_attribute_chain(tokenized_node)
+
+        return tokenized_node, entity, instance
+
     def _process_module(self, module, standard_import=False):
         """
         Takes a module and searches the d-tree forest for a matching root node.
@@ -701,7 +708,7 @@ class Saplings(ast.NodeVisitor):
 
         return return_value, func_saplings
 
-    def _process_assignment(self, target, value):
+    def _process_assignment(self, target, val_entity):
         """
         Handles variable assignments. There are three types of variable
         assignments that we consider:
@@ -720,11 +727,7 @@ class Saplings(ast.NodeVisitor):
             node representing the right-hand-side of the assignment
         """
 
-        tokenized_target = recursively_tokenize_node(target, tokens=[])
-        targ_node, instance = self._process_attribute_chain(tokenized_target)
-
-        tokenized_value = recursively_tokenize_node(value, tokens=[])
-        val_node, _ = self._process_attribute_chain(tokenized_value)
+        tokenized_target, targ_entity, instance = self._process_node(target)
 
         # TODO (V2): Handle assignments to data structures. For an assignment
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
@@ -740,16 +743,16 @@ class Saplings(ast.NodeVisitor):
             targ_str = stringify_tokenized_nodes(tokenized_target)
 
         # Type I: Known node reassigned to other known node (K2 = K1)
-        if targ_node and val_node:
-            namespace[targ_str] = val_node
+        if targ_entity and val_entity:
+            namespace[targ_str] = val_entity
             delete_sub_aliases(targ_str, namespace)
         # Type II: Known node reassigned to unknown node (K1 = U1)
-        elif targ_node and not val_node:
+        elif targ_entity and not val_entity:
             del namespace[targ_str]
             delete_sub_aliases(targ_str, namespace)
         # Type III: Unknown node assigned to known node (U1 = K1)
-        elif not targ_node and val_node:
-            namespace[targ_str] = val_node
+        elif not targ_entity and val_entity:
+            namespace[targ_str] = val_entity
 
     def _process_attribute_chain(self, attribute_chain):
         """
@@ -824,6 +827,10 @@ class Saplings(ast.NodeVisitor):
                 func_namespace,
                 arguments
             ) # TODO (V2): Handle tuple returns
+
+            if isinstance(return_value, ObjectNode):
+                return_value.increment_count()
+
             return return_value
 
         def bind_entity_to_arguments(entity, arguments):
@@ -995,6 +1002,13 @@ class Saplings(ast.NodeVisitor):
                 if isinstance(current_entity, ClassInstance):
                     current_instance["entity"] = current_entity
                     current_instance["init_index"] = index
+                elif isinstance(current_entity, ObjectNode):
+                    if current_entity.name == "find_peaks":
+                        print("Here1")
+                        print(token_str)
+                        print()
+
+                    current_entity.increment_count()
             elif isinstance(current_entity, ObjectNode):
                 # Base node exists –– create and append its child
                 current_entity = current_entity.add_child(ObjectNode(str(token)))
@@ -1053,17 +1067,24 @@ class Saplings(ast.NodeVisitor):
                 module_node.add_child(new_child)
 
     def visit_Assign(self, node):
-        values = node.value
+        if isinstance(node.value, ast.Tuple):
+            values = []
+            for value in node.value.elts:
+                _, val_entity, _ = self._process_node(value)
+                values.append(val_entity)
+        else:
+            _, values, _ = self._process_node(node.value)
+
         targets = node.targets if hasattr(node, "targets") else (node.target,)
         for target in targets: # Multiple assignment (e.g. a = b = ...)
             if isinstance(target, ast.Tuple): # Unpacking (e.g. a, b = ...)
-                for idx, elt in enumerate(target.elts):
-                    if isinstance(values, ast.Tuple):
-                        self._process_assignment(elt, values.elts[idx])
+                for index, elt in enumerate(target.elts):
+                    if isinstance(values, list):
+                        self._process_assignment(elt, values[index])
                     else:
                         self._process_assignment(elt, values)
-            elif isinstance(values, ast.Tuple):
-                for value in values.elts:
+            elif isinstance(values, list):
+                for value in values:
                     self._process_assignment(target, value)
             else:
                 self._process_assignment(target, values)
@@ -1074,7 +1095,8 @@ class Saplings(ast.NodeVisitor):
     def visit_AugAssign(self, node):
         target = node.target
         value = ast.BinOp(left=copy(target), op=node.op, right=node.value)
-        self._process_assignment(target, value)
+        _, val_entity, _ = self._process_node(value)
+        self._process_assignment(target, val_entity)
 
     def visit_Delete(self, node):
         for target in node.targets:
