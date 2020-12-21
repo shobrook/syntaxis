@@ -54,6 +54,7 @@ For more advanced usage of the `Saplings` object, read the docstring [here]().
 * **`name` _(str)_:** Name of the object
 * **`is_callable` _(bool)_:** Whether the object is callable (i.e. has `__call__` defined)
 * **`order` _(int)_:** Indicates the type of connection to the parent node (e.g. `0` is an attribute of the parent, `1` is an attribute of the output of the parent when called, etc.); `-1` if node is root
+* **`frequency` _(int)_:** Number of times the object is used in the program
 * **`children` _(list)_:** List of child nodes
 
 To pretty-print a tree, simply pass its root node into the `render_tree` generator, like so:
@@ -427,11 +428,11 @@ Once I learn what metaclasses actually are and how to use them, I'll get around 
 
 ### Miscellaneous
 
-#### `global` statements
+#### `global` and `nonlocal` statements
 
 TODO: Explain this
 
-#### `eval`, `nonlocals`, and other built-in functions
+#### `eval` and other built-in functions
 
 TODO: Explain this
 <!--Instantiating a class with the `type` function.-->
