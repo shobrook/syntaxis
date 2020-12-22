@@ -339,7 +339,7 @@ trans_diag(np.random.randn(5, 5))
 saplings will produce the following tree:
 
 <p align="center">
-  <img width="40%" src="img/anonymous.png" />
+  <img width="45%" src="img/anonymous.png" />
 </p>
 
 Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by saplings, but the assignment to `trans_diag` is not recognized, and therefore the function call is not processed.
