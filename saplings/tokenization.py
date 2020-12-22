@@ -174,6 +174,10 @@ def recursively_tokenize_node(node, tokens):
 
 
 def stringify_tokenized_nodes(tokens):
+    """
+    TODO
+    """
+    
     stringified_tokens = ''
     for index, token in enumerate(tokens):
         if index and isinstance(token, NameToken):
