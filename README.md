@@ -152,7 +152,7 @@ composed_func(torch.tensor())
   <img width="25%" src="img/currying.png" />
 </p>
 
-Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can capture the `T` and `sum` sub-attributes.
+Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can analyze the object flow within the function and capture the `T` and `sum` sub-attributes.
 
 While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Below is a list of all the failure modes I'm aware of (and currently working on fixing). If you discover a bug or missing feature that isn't listed here, please create an issue for it.
 
@@ -387,7 +387,7 @@ loss = Perceptron.calculate_loss(output, 8)
 
 While saplings can handle many common usage patterns for user-defined classes, such as the ones above, there are some things saplings can't handle yet. Below are all the limitations I'm aware of:
 
-#### Class Variables
+#### Class Modifications
 
 In the example above, calling the class method `Perceptron.calculate_loss` should change the value of the class variable `loss`. However, saplings cannot track modifications to a class when it's passed into a function. Saplings _can_ handle when a class is modified in the scope in which it was defined, like so:
 
@@ -396,9 +396,15 @@ Perceptron.loss = tensor()
 Perceptron.loss.item()
 ```
 
-Here, `item` would be captured and added to the tree as an attribute of `tensor`.
+Here, `item` would be captured and added to the tree as an attribute of `tensor`. But if the class is modified via an alias, like so:
 
-Saplings also can't propagate class variable changes to existing instances of the class. For example, continuing the code above:
+```python
+NeuralNet = Perceptron
+NeuralNet.loss = tensor()
+Perceptron.loss.item()
+```
+
+Then saplings won't capture `item`. Saplings also can't propagate class modifications to existing instances of the class. For example, continuing the code above:
 
 ```python
 model = Perceptron(1, 8)
@@ -430,9 +436,34 @@ Once I learn what metaclasses actually are and how to use them, I'll get around 
 
 #### `global` and `nonlocal` statements
 
-TODO: Explain this
+`global` statement are used inside functions to declare a variable to be in the global namespace. But saplings doesn't recognize these statements and change the namespace accordingly. For example, given:
 
-#### `eval` and other built-in functions
+```python
+import some_module
 
-TODO: Explain this
-<!--Instantiating a class with the `type` function.-->
+my_var = some_module.foo
+
+def my_func():
+  global my_var
+  my_var = None
+
+my_func()
+my_var.bar()
+```
+
+saplings will produce a tree with `bar` as an attribute of `foo`. This would be a false positive since calling `my_func` sets `my_var` to `None`, and of course `None` doesn't have `bar` as an attribute.
+
+`nonlocal` statements are similar to `global`s, except they allow you to modify variables declared in outer scopes. And like `global`s, saplings doesn't recognize `nonlocal` statements.
+
+#### Built-in functions
+
+None of Python's [built-in functions](https://docs.python.org/3/library/functions.html) are recognized by saplings. For example, consider the `enumerate` function:
+
+```python
+import some_module
+
+for index, item in enumerate(some_module.items):
+  print(item.some_attr)
+```
+
+saplings won't capture `attr` as an attribute of `some_module.items.__iter__`, which it would have if `some_module.items` weren't passed into `enumerate`.
