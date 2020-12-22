@@ -733,7 +733,7 @@ class Saplings(ast.NodeVisitor):
         # like foo = [bar(i) for i in range(10)], foo.__index__() should be an
         # alias for bar().
 
-        # TODO (V1): Handle assignments to class variables that propagate to
+        # TODO (V2): Handle assignments to class variables that propagate to
         # class instances (e.g. MyClass.variable = ...; my_instance.variable.foo())
         if instance["entity"]:
             namespace = instance["entity"].namespace
@@ -1354,13 +1354,16 @@ class Saplings(ast.NodeVisitor):
         # We treat the target as a subscript of iter
         target_assignment = ast.Assign(
             target=node.target,
-            value=ast.Subscript(
-                value=node.iter,
-                slice=ast.Index(value=ast.NameConstant(None)),
-                ctx=ast.Load()
+            value=ast.Call(
+                func=ast.Attribute(
+                    value=node.iter,
+                    attr="__iter__",
+                    ctx=ast.Load()
+                ),
+                args=[],
+                keywords=[]
             )
         )
-        # TODO (V1): Change this to be __iter__ not __index__
         self.visit(ast.Module(body=[target_assignment] + node.body))
 
         if not self._is_traversal_halted:
