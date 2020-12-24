@@ -466,4 +466,4 @@ for index, item in enumerate(some_module.items):
   print(item.some_attr)
 ```
 
-saplings won't capture `attr` as an attribute of `some_module.items.__iter__`, which it would have if `some_module.items` weren't passed into `enumerate`.
+saplings won't capture `attr` as an attribute of `some_module.items.__iter__`, which it would have if `some_module.items` wasn't wrapped by `enumerate`.
