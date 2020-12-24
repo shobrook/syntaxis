@@ -4,6 +4,9 @@ from collections import defaultdict
 from copy import copy
 
 # Local Modules
+# import saplings.utilities as utils
+# import saplings.tokenization as tkn
+# from saplings.entities import ObjectNode, Function, Class, ClassInstance
 import utilities as utils
 import tokenization as tkn
 from entities import ObjectNode, Function, Class, ClassInstance
@@ -1112,22 +1115,19 @@ class Saplings(ast.NodeVisitor):
         """
 
         namespace = self._namespace.copy()
+        body_to_process = node.body
 
-        if node.type:
-            _, exception_entity, _ = self._process_node(node.type)
+        if node.type and node.name:
+            exception_alias_assign_node = ast.Assign(
+                targets=[ast.Name(id=node.name, ctx=ast.Store())],
+                value=node.type
+            )
+            body_to_process.insert(0, exception_alias_assign_node)
+        elif node.type:
+            self.visit(node.type)
 
-            # TODO: Create an ast.Assign node instead
-            if node.name: # except A as B
-                tokenized_alias = tkn.recursively_tokenize_node(node.name, [])
-                alias_str = tkn.stringify_tokenized_nodes(tokenized_alias)
-
-                if not exception_entity:
-                    del namespace[alias_str]
-                else:
-                    namespace[alias_str] = exception_entity
-
-        body_saplings_obj = self._process_subtree_in_new_scope(
-            ast.Module(body=node.body),
+        self._process_subtree_in_new_scope(
+            ast.Module(body=body_to_process),
             namespace
         )
 
