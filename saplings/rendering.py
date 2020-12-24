@@ -38,6 +38,7 @@ def dictify_tree(node):
     d = {node.name: {
         "is_callable": node.is_callable,
         "order": node.order,
+        "frequency": node.frequency,
         "children": []
     }}
     for child in node.children:
