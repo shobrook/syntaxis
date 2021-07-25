@@ -186,13 +186,13 @@ for x in np.array([]):
   print(x.mean())
 ```
 
-Because saplings only does _static_ analysis, it doesn't know that `np.array([])` is an empty list, and that therefore the loop never executes. In this situation, capturing `mean` and adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive, since `x` (i.e. the output of `np.array().__index__()`) is never defined. To handle this, saplings _should_ branch out and produce two possible trees for this module –– one that assumes the loop doesn't execute, and one that assumes it does:
+Because saplings only does _static_ analysis and doesn't do type inference, it doesn't know that `np.array([])` is an empty list, and that therefore the loop never executes. In this situation, capturing `mean` and adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive, since `x` (i.e. the output of `np.array().__index__()`) is never defined. To handle this, saplings _should_ branch out and produce two possible trees for this module –– one that assumes the loop doesn't execute, and one that assumes it does:
 
 <p align="center">
   <img width="50%" src="img/for_loop.png" />
 </p>
 
-But as of right now, saplings will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed.
+But as of right now, saplings will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed (because they usually are).
 
 Below are the assumptions saplings makes for other control flow elements.
 
@@ -202,7 +202,7 @@ Below are the assumptions saplings makes for other control flow elements.
 
 #### `if`/`else` blocks
 
-We assume the bodies of `if` blocks execute, and that `elif`/`else` blocks do not execute. That is, changes to the namespace made in `if` blocks are the only changes assumed to persist into the parent scope, whereas changes in `elif` or `else` blocks do not persist. For example, given:
+Saplings processes `if` and `else` blocks more conservatively than loops. It tracks object flow within these blocks but doesn't allow changes to the namespace to persist into the parent scope. For example, given:
 
 ```python
 import numpy as np
@@ -214,10 +214,10 @@ if condition:
 else:
   print(X.mean())
   X = None
-  y = np.array([1, 2, 3])
+  Y = np.array([1, 2, 3])
 
 print(X.sum())
-print(y.max())
+print(Y.max())
 ```
 
 saplings will produce the following tree:
@@ -226,21 +226,23 @@ saplings will produce the following tree:
   <img width="40%" src="img/if_else_1.png" />
 </p>
 
-Notice how our assumption can produce false negatives and positives. If it turns out `condition` is `False` and the `else` block executes, then including the `sum` node would be a false positive and excluding the `max` node would be a false negative. Ideally, saplings should branch out and produce two separate trees for this module –– one that assumes the `if` block executes and another that assumes the `else` block executes:
+Notice how the value of `X` is unreliable since we don't know if `condition` is `True` or `False`. To handle this, saplings simply stops tracking any variable that's defined in the outer scope, like `X`, if it's modified inside an `if`/`else` block. Similarly, notice how there exists an execution path where `Y` is never defined and `Y.max()` throws an error. To handle this, saplings assumes that any variable defined inside an `if`/`else` block, such as `Y`, doesn't persist into the outer scope.
+
+Both of these assumptions are made in attempt to reduce false positives and false negatives. But ideally, saplings would branch out and produce two separate trees for this module –– one that assumes the `if` block executes and another that assumes the `else` block executes, like so:
 
 <p align="center">
   <img width="65%" src="img/if_else_2.png" />
 </p>
 
-Our assumption applies to ternary expressions too. For example, the assignment `a = b.c if condition else b.d` is, under our assumption, equivalent to `a = b.c`.
-
 #### `try`/`except` blocks
 
-`try` blocks are assumed to always execute, without throwing an exception, and the `except` block is assumed never to execute. Like with `if`/`else` blocks, this assumption does not mean object flow _within_ the `except` body is ignored. Assignments and function calls are still tracked inside the `except` block, but any changes to the namespace made within this block do not persist into the outer scope.
+`try`/`except` blocks are handled similarly to `if`/`else` blocks –– that is, changes to the namespace made in either block do not persist in the outer scope.
+
+Notably, `try` and `else` blocks are treated as a single block, since `else` is only executed if `try` executes without exceptions. And `finally` blocks are treated as separate from the control flow, since code in here always executes regardless of whether an exception is thrown.
 
 #### `return`, `break`, and `continue` statements
 
-All code underneath a `return`, `break`, or `continue` statement is assumed not to execute and will not be analyzed. This is not so much a "limitation" as it is an assumption, but it can produce some false negatives. For example, consider this:
+All code underneath a `return`, `break`, or `continue` statement is assumed not to execute and will not be analyzed. For example, consider this:
 
 ```python
 import numpy as np
@@ -252,6 +254,15 @@ for x in range(10):
 ```
 
 It may be the case that `mean` is actually an attribute of `np.array`, but saplings will not capture this since `y.mean()` is never executed.
+
+Notably, saplings doesn't apply this assumption to statements inside control flow blocks. For example, if the `continue` statement above was changed to:
+
+```python
+if condition:
+  continue
+```  
+
+Then `mean` _would_ be captured by saplings as an attribute of `np.array`.
 
 ### Functions
 
