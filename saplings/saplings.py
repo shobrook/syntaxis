@@ -909,6 +909,9 @@ class Saplings(ast.NodeVisitor):
         for n in node.body:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 for decorator in n.decorator_list:
+                    if not hasattr(decorator, "id"):
+                        continue
+
                     if decorator.id == "staticmethod":
                         n.method_type = "static"
                         break
@@ -1010,31 +1013,16 @@ class Saplings(ast.NodeVisitor):
 
         self.visit(node.test)
 
-        # If node is processed last so the Else nodes are processed with an
-        # unaltered namespace
-        for else_node in node.orelse:
-            self._process_subtree_in_new_scope(
-                tree=else_node,
+        sub_namespaces = []
+        for if_body in [ast.Module(body=node.body)] + node.orelse:
+            sub_namespace = self._process_subtree_in_new_scope(
+                tree=if_body,
                 namespace=self._namespace.copy()
-            )
+            )._namespace
+            sub_namespaces.append(sub_namespace)
 
-        self.visit(ast.Module(body=node.body))
-
-    def visit_IfExp(self, node):
-        """
-        TODO
-        """
-
-        self.visit(node.test)
-        self._process_subtree_in_new_scope(
-            node.orelse,
-            self._namespace.copy()
-        )
-        self.visit(node.body)
-
-        # _, entity, instance = self._process_node(node.body)
-        #
-        # return (entity, instance)
+        for sub_namespace in sub_namespaces:
+            utils.diff_and_clean_namespaces(self._namespace, sub_namespace)
 
     def visit_For(self, node):
         """
@@ -1097,14 +1085,18 @@ class Saplings(ast.NodeVisitor):
         TODO
         """
 
+        try_namespace = self._process_subtree_in_new_scope(
+            tree=ast.Module(body=node.body + node.orelse),
+            namespace=self._namespace.copy()
+        )._namespace
+
+        sub_namespaces = [try_namespace]
         for except_handler_node in node.handlers:
-            self.visit_ExceptHandler(except_handler_node)
+            except_namespace = self.visit_ExceptHandler(except_handler_node)
+            sub_namespaces.append(except_namespace)
 
-        self.visit(ast.Module(body=node.body))
-
-        # Executes only if node.body doesn't throw an exception
-        for else_node in node.orelse:
-            self.visit_If(else_node)
+        for sub_namespace in sub_namespaces:
+            utils.diff_and_clean_namespaces(self._namespace, sub_namespace)
 
         # node.finalbody is executed no matter what
         self.visit(ast.Module(body=node.finalbody))
@@ -1114,9 +1106,7 @@ class Saplings(ast.NodeVisitor):
         TODO
         """
 
-        namespace = self._namespace.copy()
         body_to_process = node.body
-
         if node.type and node.name:
             exception_alias_assign_node = ast.Assign(
                 targets=[ast.Name(id=node.name, ctx=ast.Store())],
@@ -1126,15 +1116,18 @@ class Saplings(ast.NodeVisitor):
         elif node.type:
             self.visit(node.type)
 
-        self._process_subtree_in_new_scope(
+        except_namespace = self._process_subtree_in_new_scope(
             ast.Module(body=body_to_process),
-            namespace
-        )
+            self._namespace.copy()
+        )._namespace
+        return except_namespace
 
     def visit_withitem(self, node):
         """
         TODO
         """
+
+        # TODO (V1): Add call nodes for .__enter__() and .__exit__()
 
         if node.optional_vars:
             assign_node = ast.Assign(
