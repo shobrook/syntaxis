@@ -441,7 +441,7 @@ saplings will not recognize `bar` as an attribute of `module.Foo`, despite `bar`
 
 #### Metaclasses
 
-Once I learn what metaclasses actually are and how to use them, I'll get around to handling them in saplings. But for now this is on the bottom of my to-do list since 99.9% of Python users also don't know what metaclasses are or how to use them.
+Once I learn what metaclasses actually are and how to use them, I'll get around to handling them in saplings. But for now this is on the bottom of my to-do list since 99.9% of Python users also don't know what the hell metaclasses are.
 
 ### Miscellaneous
 
