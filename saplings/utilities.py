@@ -57,6 +57,7 @@ def consolidate_call_nodes(node, parent=None):
 
     if node.name == "()":
         parent.is_callable = True
+        parent.frequency += node.frequency
         parent.children.remove(node)
         for child in node.children:
             child.order += 1
@@ -68,3 +69,19 @@ def stringify_node(node):
     node_str = tkn.stringify_tokenized_nodes(tokens)
 
     return node_str
+
+
+def diff_and_clean_namespaces(namespace, other_namespace):
+    diff = []
+    for name, entity in namespace.items():
+        if name not in other_namespace:
+            diff.append(name)
+        elif other_namespace[name] != entity:
+            diff.append(name)
+
+    for name in diff:
+        if name not in namespace:
+            continue
+
+        del namespace[name]
+        delete_sub_aliases(name, namespace)
