@@ -94,6 +94,7 @@ dictify_tree(root_node)
   "numpy": {
     "is_callable": False,
     "order": -1,
+    "frequency": 1,
     "children": [
       {"random": ...},
       {"matmul": ...},
