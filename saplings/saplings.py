@@ -4,12 +4,12 @@ from collections import defaultdict
 from copy import copy
 
 # Local Modules
-# import saplings.utilities as utils
-# import saplings.tokenization as tkn
-# from saplings.entities import ObjectNode, Function, Class, ClassInstance
-import utilities as utils
-import tokenization as tkn
-from entities import ObjectNode, Function, Class, ClassInstance
+import saplings.utilities as utils
+import saplings.tokenization as tkn
+from saplings.entities import ObjectNode, Function, Class, ClassInstance
+# import utilities as utils
+# import tokenization as tkn
+# from entities import ObjectNode, Function, Class, ClassInstance
 
 
 ##########
@@ -18,7 +18,7 @@ from entities import ObjectNode, Function, Class, ClassInstance
 
 
 class Saplings(ast.NodeVisitor):
-    def __init__(self, tree, object_hierarchies=[], namespace={}):
+    def __init__(self, tree, object_hierarchies=[], namespace={}, track_modules=True):
         """
         Extracts object hierarchies for imported modules in a program, given its
         AST.
@@ -34,6 +34,7 @@ class Saplings(ast.NodeVisitor):
         """
 
         self._object_hierarchies = object_hierarchies
+        self._track_modules = track_modules
 
         # Maps active identifiers to namespace entities (e.g. ObjectNodes,
         # Functions, Classes, and ClassInstances)
@@ -117,7 +118,7 @@ class Saplings(ast.NodeVisitor):
             instance of a Saplings object
         """
 
-        return Saplings(tree, self._object_hierarchies, namespace)
+        return Saplings(tree, self._object_hierarchies, namespace, self._track_modules)
 
     def _process_node(self, node):
         """
@@ -178,7 +179,7 @@ class Saplings(ast.NodeVisitor):
             function,
             func_namespace,
             arguments
-        ) # TODO (V2): Handle tuple returns
+        ) # TODO (V2): Handle tuple returns (blocked by data structure handling)
 
         if isinstance(return_value, ObjectNode):
             return_value.increment_count()
@@ -705,6 +706,9 @@ class Saplings(ast.NodeVisitor):
         TODO
         """
 
+        if not self._track_modules:
+            return
+
         for module in node.names:
             if module.name.startswith('.'): # Ignores relative imports
                 continue
@@ -721,6 +725,9 @@ class Saplings(ast.NodeVisitor):
         """
         TODO
         """
+
+        if not self._track_modules:
+            return
 
         if node.level: # Ignores relative imports
             return
@@ -881,7 +888,7 @@ class Saplings(ast.NodeVisitor):
 
         self._process_subtree_in_new_scope(node.body, namespace)
 
-        # TODO (V1): Handle assignments to lambdas and lambda function calls
+        # TODO (V2): Handle assignments to lambdas and lambda function calls
 
     def visit_Return(self, node):
         """
@@ -931,7 +938,7 @@ class Saplings(ast.NodeVisitor):
                 # For example:
                     # class foo(object):
                     #     for x in range(10):
-                    #         pass
+                    #         continue
                 # foo.x is valid.
 
                 targets = [n.target] if not isinstance(n, ast.Assign) else n.targets

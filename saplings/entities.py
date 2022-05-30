@@ -5,7 +5,7 @@ class ObjectNode(object):
     module and the object.
     """
 
-    def __init__(self, name, is_callable=False, order=0, children=[]):
+    def __init__(self, name, is_callable=False, order=0, frequency=1, children=[]):
         """
         Parameters
         ----------
@@ -26,9 +26,8 @@ class ObjectNode(object):
         self.name = name
         self.is_callable = is_callable
         self.order = order
+        self.frequency = frequency
         self.children = []
-
-        self.frequency = 1
 
         for child in children:
             self.add_child(child)
