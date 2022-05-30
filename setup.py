@@ -17,7 +17,7 @@ setup(
     description="Static analysis tool for Python",
     long_description=readme,
     long_description_content_type="text/markdown",
-    version="v4.1.1",
+    version="v4.2.0",
     packages=["saplings"],
     python_requires=">=3",
     url="https://github.com/shobrook/saplings",
@@ -25,6 +25,6 @@ setup(
     author_email="shobrookj@gmail.com",
     # classifiers=[],
     install_requires=[],
-    keywords=["ast", "object", "hierarchy", "tree", "static", "analysis", "dependency", "module"],
+    keywords=["ast", "attribute", "type", "object", "hierarchy", "tree", "static", "analysis", "dependency", "module"],
     license="MIT"
 )
