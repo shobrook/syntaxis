@@ -4,12 +4,12 @@ from collections import defaultdict
 from copy import copy
 
 # Local Modules
-# import saplings.utilities as utils
-# import saplings.tokenization as tkn
-# from saplings.entities import ObjectNode, Function, Class, ClassInstance
-import utilities as utils
-import tokenization as tkn
-from entities import ObjectNode, Function, Class, ClassInstance
+import saplings.utilities as utils
+import saplings.tokenization as tkn
+from saplings.entities import ObjectNode, Function, Class, ClassInstance
+# import utilities as utils
+# import tokenization as tkn
+# from entities import ObjectNode, Function, Class, ClassInstance
 
 
 ##########
