@@ -4,12 +4,12 @@ from collections import defaultdict
 from copy import copy
 
 # Local Modules
-import saplings.utilities as utils
-import saplings.tokenization as tkn
-from saplings.entities import ObjectNode, Function, Class, ClassInstance
-# import utilities as utils
-# import tokenization as tkn
-# from entities import ObjectNode, Function, Class, ClassInstance
+# import saplings.utilities as utils
+# import saplings.tokenization as tkn
+# from saplings.entities import ObjectNode, Function, Class, ClassInstance
+import utilities as utils
+import tokenization as tkn
+from entities import ObjectNode, Function, Class, ClassInstance
 
 
 ##########
@@ -33,12 +33,12 @@ class Saplings(ast.NodeVisitor):
             mapping of identifiers to ObjectNodes/Functions/Classes/ClassInstances
         """
 
-        self._object_hierarchies = object_hierarchies
+        self._object_hierarchies = [obj_node for obj_node in object_hierarchies]
         self._track_modules = track_modules
 
         # Maps active identifiers to namespace entities (e.g. ObjectNodes,
         # Functions, Classes, and ClassInstances)
-        self._namespace = namespace
+        self._namespace = {name: entity for name, entity in namespace.items()}
 
         # Keeps track of functions defined in the current scope
         self._functions = set()
@@ -48,7 +48,7 @@ class Saplings(ast.NodeVisitor):
         self._return_value = None
 
         # True when a Return, Continue, or Break node is hit –– stops traversal
-        # of subtree
+        # of tree
         self._is_traversal_halted = False
 
         self.visit(tree)
