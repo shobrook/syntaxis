@@ -91,13 +91,13 @@ def diff_and_clean_namespaces(namespace, other_namespace):
 
 def init_namespace(object_ids):
     object_hierarchies = []
-    init_namespace = {}
+    namespace = {}
     for object_id in object_ids:
         object_node = ObjectNode(object_id, order=-1, frequency=0)
-        init_namespace[object_id] = object_node
+        namespace[object_id] = object_node
         object_hierarchies.append(object_node)
 
     return {
         "object_hierarchies": object_hierarchies,
-        "namespace": init_namespace
+        "namespace": namespace
     }
