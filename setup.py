@@ -17,7 +17,7 @@ setup(
     description="Static analysis tool for Python",
     long_description=readme,
     long_description_content_type="text/markdown",
-    version="v4.2.1",
+    version="v4.3.1",
     packages=["saplings"],
     python_requires=">=3",
     url="https://github.com/shobrook/saplings",
