@@ -762,8 +762,11 @@ class Saplings(ast.NodeVisitor):
         TODO
         """
 
-        if isinstance(node.value, ast.Tuple):
+        # Processes the RHS of the assignment
+        if not node.value: # Value is optional for AnnAssign nodes
             values = []
+        elif isinstance(node.value, ast.Tuple):
+            values = [] # Namespace entities for the RHS
             for value in node.value.elts:
                 _, val_entity, _ = self._process_node(value)
                 values.append(val_entity)
@@ -778,7 +781,7 @@ class Saplings(ast.NodeVisitor):
                         self._process_assignment(elt, values[index])
                     else:
                         self._process_assignment(elt, values)
-            elif isinstance(values, list):
+            elif isinstance(values, list): # QUESTION: What assignment case is this?
                 for value in values:
                     self._process_assignment(target, value)
             else:
