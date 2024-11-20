@@ -1,9 +1,8 @@
-<h1 align="center">
-  <img width="30%" src="img/logo.png" />
-  <br />
-</h1>
+# syntaxis
 
-`saplings` is a static analysis tool for Python. Given a program, `saplings` will build object hierarchies for every module imported in the program. Object hierarchies are dependency trees where the root node represents a module and each child represents an attribute of its parent. These can be useful for making inferences about a module's API, mining patterns in how a module is used, and [duck typing](https://en.wikipedia.org/wiki/Duck_typing).
+> Note: this tool used to be called saplings but has sinced been renamed to syntaxis. [Saplings now refers to an LLM agent library.](https://github.com/shobrook/saplings)
+
+`syntaxis` is a static analysis tool for Python. Given a program, `syntaxis` will build object hierarchies for every module imported in the program. Object hierarchies are dependency trees where the root node represents a module and each child represents an attribute of its parent. These can be useful for making inferences about a module's API, mining patterns in how a module is used, and [duck typing](https://en.wikipedia.org/wiki/Duck_typing).
 
 <img src="img/demo.gif" />
 
@@ -21,32 +20,32 @@
 
 > Requires Python 3.X.
 
-You can install `saplings` with `pip`:
+You can install `syntaxis` with `pip`:
 
 ```bash
-$ pip install saplings
+$ pip install syntaxis
 ```
 
 ## Usage
 
-Using saplings takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) using the `ast` module. Then, import the `Saplings` object and initialize it with the root node of the AST.
+Using syntaxis takes only two steps. First, convert your input program into an [Abstract Syntax Tree (AST)](https://en.wikipedia.org/wiki/Abstract_syntax_tree) using the `ast` module. Then, import the `Syntaxis` object and initialize it with the root node of the AST.
 
 ```python
 import ast
-from saplings import Saplings
+from syntaxis import Syntaxis
 
 my_program = open("path_to_your_program.py", "r").read()
 program_ast = ast.parse(my_program)
-my_saplings = Saplings(program_ast)
+my_syntaxis = Syntaxis(program_ast)
 ```
 
-That's it. To access the object hierarchies, simply call the `get_trees` method in your `Saplings` object, like so:
+That's it. To access the object hierarchies, simply call the `get_trees` method in your `Syntaxis` object, like so:
 
 ```python
-my_saplings.get_trees() # => [ObjectNode(), ObjectNode(), ..., ObjectNode()]
+my_syntaxis.get_trees() # => [ObjectNode(), ObjectNode(), ..., ObjectNode()]
 ```
 
-For more advanced usage of the `Saplings` object, read the docstring [here]().
+For more advanced usage of the `Syntaxis` object, read the docstring [here]().
 
 ### Printing an Object Hierarchy
 
@@ -60,9 +59,9 @@ For more advanced usage of the `Saplings` object, read the docstring [here]().
 To pretty-print a tree, simply pass its root node into the `render_tree` generator, like so:
 
 ```python
-from saplings import render_tree
+from syntaxis import render_tree
 
-trees = my_saplings.get_trees()
+trees = my_syntaxis.get_trees()
 root_node = trees[0]
 for branches, node in render_tree(root_node):
   print(f"{branches}{node}")
@@ -85,7 +84,7 @@ numpy (NC, -1)
 To create a dictionary representation of a tree, pass its root node into the `dictify_tree` function, like so:
 
 ```python
-from saplings import dictify_tree
+from syntaxis import dictify_tree
 
 dictify_tree(root_node)
 ```
@@ -118,7 +117,7 @@ my_parent()().attr # attr is a 2nd-order child of my_obj
 
 #### What counts as a function?
 
-In Python, subscripts, comparisons, and binary operations are all just syntactic sugar for function calls, and are treated by saplings as such. Here are some common "translations:"
+In Python, subscripts, comparisons, and binary operations are all just syntactic sugar for function calls, and are treated by syntaxis as such. Here are some common "translations:"
 
 ```python
 my_obj['my_sub'] # => my_obj.__index__('my_sub')
@@ -128,7 +127,7 @@ my_obj == None # => my_obj.__eq__(None)
 
 ## Limitations
 
-Saplings _[statically analyzes](https://en.wikipedia.org/wiki/Static_program_analysis)_ the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via variable assignments and calls of user-defined functions and classes. To demonstrate this idea, consider this example of [currying](https://en.wikipedia.org/wiki/Currying) and the tree saplings produces:
+Syntaxis _[statically analyzes](https://en.wikipedia.org/wiki/Static_program_analysis)_ the usage of a module in a program, meaning it doesn't actually execute any code. Instead, it traverses the program's AST and tracks "object flow," i.e. how an object is passed through a program via variable assignments and calls of user-defined functions and classes. To demonstrate this idea, consider this example of [currying](https://en.wikipedia.org/wiki/Currying) and the tree syntaxis produces:
 
 ```python
 import torch
@@ -153,13 +152,13 @@ composed_func(torch.tensor())
   <img width="25%" src="img/currying.png" />
 </p>
 
-Saplings identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because saplings has an understanding of how `composed_func` is defined, it can analyze the object flow within the function and capture the `T` and `sum` sub-attributes.
+Syntaxis identifies `tensor` as an attribute of `torch`, then follows the object as it's passed into `composed_func`. Because syntaxis has an understanding of how `composed_func` is defined, it can analyze the object flow within the function and capture the `T` and `sum` sub-attributes.
 
-While saplings can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where saplings produces inaccurate trees. Below is a list of all the failure modes I'm aware of (and currently working on fixing). If you discover a bug or missing feature that isn't listed here, please [create an issue](https://github.com/shobrook/saplings/issues/new) for it.
+While syntaxis can track object flow through many complex paths in a program, I haven't tested every edge case, and there are some situations where syntaxis produces inaccurate trees. Below is a list of all the failure modes I'm aware of (and currently working on fixing). If you discover a bug or missing feature that isn't listed here, please [create an issue](https://github.com/shobrook/syntaxis/issues/new) for it.
 
 ### Data Structures
 
-As of right now, saplings can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
+As of right now, syntaxis can't track _assignments_ to comprehensions, generator expressions, dictionaries, lists, tuples, or sets. It can, however, track object flow _inside_ these data structures. For example, consider the following:
 
 ```python
 import numpy as np
@@ -168,13 +167,13 @@ vectors = [np.array([0]), np.array([1]), np.array([2])]
 vectors[0].mean()
 ```
 
-Saplings can capture `array` and add it to the `numpy` object hierarchy, but it cannot capture `mean`, and thus produces the following tree:
+Syntaxis can capture `array` and add it to the `numpy` object hierarchy, but it cannot capture `mean`, and thus produces the following tree:
 
 <p align="center">
   <img width="25%" src="img/data_structures.png" />
 </p>
 
-This limitation can have some unexpected consequences. For example, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are actually returning tuples. Therefore, the output of those functions won't be tracked by saplings. The same logic applies to variable unpacking with `*` and `**`.
+This limitation can have some unexpected consequences. For example, functions that return multiple values with one `return` statement (e.g. `return a, b, c`) are actually returning tuples. Therefore, the output of those functions won't be tracked by syntaxis. The same logic applies to variable unpacking with `*` and `**`.
 
 ### Control Flow
 
@@ -187,15 +186,15 @@ for x in np.array([]):
   print(x.mean())
 ```
 
-Because saplings only does _static_ analysis and doesn't do type inference, it doesn't know that `np.array([])` is an empty list, and that therefore the loop never executes. In this situation, capturing `mean` and adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive, since `x` (i.e. the output of `np.array().__index__()`) is never defined. To handle this, saplings _should_ branch out and produce two possible trees for this module –– one that assumes the loop doesn't execute, and one that assumes it does:
+Because syntaxis only does _static_ analysis and doesn't do type inference, it doesn't know that `np.array([])` is an empty list, and that therefore the loop never executes. In this situation, capturing `mean` and adding the `__index__ -> mean` subtree to `numpy -> array` would be a false positive, since `x` (i.e. the output of `np.array().__index__()`) is never defined. To handle this, syntaxis _should_ branch out and produce two possible trees for this module –– one that assumes the loop doesn't execute, and one that assumes it does:
 
 <p align="center">
   <img width="50%" src="img/for_loop.png" />
 </p>
 
-But as of right now, saplings will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed (because they usually are).
+But as of right now, syntaxis will only produce the tree on the right –– that is, we assume the bodies of `for` loops are always executed (because they usually are).
 
-Below are the assumptions saplings makes for other control flow elements.
+Below are the assumptions syntaxis makes for other control flow elements.
 
 #### `while` loops
 
@@ -203,7 +202,7 @@ Below are the assumptions saplings makes for other control flow elements.
 
 #### `if`/`else` blocks
 
-Saplings processes `if` and `else` blocks more conservatively than loops. It tracks object flow within these blocks but doesn't allow changes to the namespace to persist into the parent scope. For example, given:
+Syntaxis processes `if` and `else` blocks more conservatively than loops. It tracks object flow within these blocks but doesn't allow changes to the namespace to persist into the parent scope. For example, given:
 
 ```python
 import numpy as np
@@ -221,15 +220,15 @@ print(X.sum())
 print(Y.max())
 ```
 
-saplings will produce the following tree:
+syntaxis will produce the following tree:
 
 <p align="center">
   <img width="40%" src="img/if_else_1.png" />
 </p>
 
-Notice how the value of `X` is unreliable since we don't know if `condition` is `True` or `False`. To handle this, saplings simply stops tracking any variable that's defined in the outer scope, like `X`, if it's modified inside an `if`/`else` block. Similarly, notice how there exists an execution path where `Y` is never defined and `Y.max()` throws an error. To handle this, saplings assumes that any variable defined inside an `if`/`else` block, such as `Y`, doesn't persist into the outer scope.
+Notice how the value of `X` is unreliable since we don't know if `condition` is `True` or `False`. To handle this, syntaxis simply stops tracking any variable that's defined in the outer scope, like `X`, if it's modified inside an `if`/`else` block. Similarly, notice how there exists an execution path where `Y` is never defined and `Y.max()` throws an error. To handle this, syntaxis assumes that any variable defined inside an `if`/`else` block, such as `Y`, doesn't persist into the outer scope.
 
-Both of these assumptions are made in attempt to reduce false positives and false negatives. But ideally, saplings would branch out and produce two separate trees for this module –– one that assumes the `if` block executes and another that assumes the `else` block executes, like so:
+Both of these assumptions are made in attempt to reduce false positives and false negatives. But ideally, syntaxis would branch out and produce two separate trees for this module –– one that assumes the `if` block executes and another that assumes the `else` block executes, like so:
 
 <p align="center">
   <img width="65%" src="img/if_else_2.png" />
@@ -254,22 +253,22 @@ for x in range(10):
   y.mean()
 ```
 
-It may be the case that `mean` is actually an attribute of `np.array`, but saplings will not capture this since `y.mean()` is never executed.
+It may be the case that `mean` is actually an attribute of `np.array`, but syntaxis will not capture this since `y.mean()` is never executed.
 
-Notably, saplings doesn't apply this assumption to statements inside control flow blocks. For example, if the `continue` statement above was changed to:
+Notably, syntaxis doesn't apply this assumption to statements inside control flow blocks. For example, if the `continue` statement above was changed to:
 
 ```python
 if condition:
   continue
 ```  
 
-Then `mean` _would_ be captured by saplings as an attribute of `np.array`.
+Then `mean` _would_ be captured by syntaxis as an attribute of `np.array`.
 
 ### Functions
 
 <!--#### Conditional return types
 
-`saplings` can generally track module and user-defined functions, but there are some edge cases it cannot handle. For example, because module functions must be treated as black-boxes to `saplings`, conditional return types cannot be accounted for. Consider the following code and trees that saplings produces:
+`syntaxis` can generally track module and user-defined functions, but there are some edge cases it cannot handle. For example, because module functions must be treated as black-boxes to `syntaxis`, conditional return types cannot be accounted for. Consider the following code and trees that syntaxis produces:
 
 ```python
 import my_module
@@ -288,11 +287,11 @@ def foo(x):
     return ObjectB()
 ```
 
-and `ObjectB` doesn't have `attr1` as an attribute. Then, saplings will have incorrectly treated `attr1` and `attr2` as attributes of the same object.-->
+and `ObjectB` doesn't have `attr1` as an attribute. Then, syntaxis will have incorrectly treated `attr1` and `attr2` as attributes of the same object.-->
 
 #### Recursion
 
-Saplings cannot process recursive function calls. Consider the following example:
+Syntaxis cannot process recursive function calls. Consider the following example:
 
 ```python
 import some_module
@@ -309,7 +308,7 @@ output = my_recursive_func(5)
 output.attr()
 ```
 
-We know this function returns `some_module.foo`, but saplings cannot tell which base case is hit, and therefore can't track the output. To avoid false positives, we assume this function returns nothing, and thus `attr` will not be captured and added to the object hierarchy. The tree saplings produces is:
+We know this function returns `some_module.foo`, but syntaxis cannot tell which base case is hit, and therefore can't track the output. To avoid false positives, we assume this function returns nothing, and thus `attr` will not be captured and added to the object hierarchy. The tree syntaxis produces is:
 
 <p align="center">
   <img width="35%" src="img/recursion.png" />
@@ -317,7 +316,7 @@ We know this function returns `some_module.foo`, but saplings cannot tell which 
 
 #### Generators
 
-Generators aren't processed as iterables. Instead, saplings ignores `yield`/`yield from` statements and treats the generator like a normal function. For example, given:
+Generators aren't processed as iterables. Instead, syntaxis ignores `yield`/`yield from` statements and treats the generator like a normal function. For example, given:
 
 ```python
 import some_module
@@ -329,7 +328,7 @@ for item in my_generator():
   print(item.name)
 ```
 
-`__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by saplings will look like this:
+`__index__ -> name` won't be added as a subtree to `some_module -> some_items`, and so the tree produced by syntaxis will look like this:
 
 <p align="center">
   <img width="35%" src="img/generators.png" />
@@ -348,17 +347,17 @@ trans_diag = lambda x: np.diagonal(x.T)
 trans_diag(np.random.randn(5, 5))
 ```
 
-saplings will produce the following tree:
+syntaxis will produce the following tree:
 
 <p align="center">
   <img width="45%" src="img/anonymous.png" />
 </p>
 
-Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by saplings, but the assignment to `trans_diag` is not recognized, and therefore the function call is not processed.
+Notice that `T` is not captured as an attribute of `numpy.random.randn`, but `diagonal` is captured as an attribute of `numpy`. This is because the body of the `lambda` function is processed by syntaxis, but the assignment to `trans_diag` is not recognized, and therefore the function call is not processed.
 
 ### Classes
 
-Saplings can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, classes defined within classes, and class closures (i.e. functions that return classes). Notably, it can keep track of the state of each instance of a user-defined class. Consider the following program and the tree saplings produces:
+Syntaxis can track object flow in static, class, and instance methods, getter and setter methods, class and instance variables, classes defined within classes, and class closures (i.e. functions that return classes). Notably, it can keep track of the state of each instance of a user-defined class. Consider the following program and the tree syntaxis produces:
 
 ```python
 import torch.nn as nn
@@ -397,11 +396,11 @@ loss = Perceptron.calculate_loss(output, 8)
   <img width="50%" src="img/class.png" />
 </p>
 
-While saplings can handle many common usage patterns for user-defined classes, such as the ones above, there are some things saplings can't handle yet. Below are all the limitations I'm aware of:
+While syntaxis can handle many common usage patterns for user-defined classes, such as the ones above, there are some things syntaxis can't handle yet. Below are all the limitations I'm aware of:
 
 #### Class Modifications
 
-In the example above, calling the class method `Perceptron.calculate_loss` should change the value of the class variable `loss`. However, saplings cannot track modifications to a class when it's passed into a function. Saplings _can_ handle when a class is modified in the scope in which it was defined, like so:
+In the example above, calling the class method `Perceptron.calculate_loss` should change the value of the class variable `loss`. However, syntaxis cannot track modifications to a class when it's passed into a function. Syntaxis _can_ handle when a class is modified in the scope in which it was defined, like so:
 
 ```python
 Perceptron.loss = tensor()
@@ -416,7 +415,7 @@ NeuralNet.loss = tensor()
 Perceptron.loss.item()
 ```
 
-Then saplings won't capture `item`. Saplings also can't propagate class modifications to existing instances of the class. For example, continuing the code above:
+Then syntaxis won't capture `item`. Syntaxis also can't propagate class modifications to existing instances of the class. For example, continuing the code above:
 
 ```python
 model = Perceptron(1, 8)
@@ -428,7 +427,7 @@ Because the change to `loss`, a class variable, won't propagate to `model`, an i
 
 #### Inheritance
 
-Saplings cannot recognize inherited methods or variables in user-defined classes. For example, given:
+Syntaxis cannot recognize inherited methods or variables in user-defined classes. For example, given:
 
 ```python
 import some_module
@@ -438,17 +437,17 @@ class MyClass(module.Foo):
     self.bar(x)
 ```
 
-saplings will not recognize `bar` as an attribute of `module.Foo`, despite `bar` being an inherited method. This limitation also holds true when the base class is user-defined.
+syntaxis will not recognize `bar` as an attribute of `module.Foo`, despite `bar` being an inherited method. This limitation also holds true when the base class is user-defined.
 
 #### Metaclasses
 
-Once I learn what metaclasses actually are and how to use them, I'll get around to handling them in saplings. But for now this is on the bottom of my to-do list since 99.9% of Python users also don't know what the hell metaclasses are.
+Once I learn what metaclasses actually are and how to use them, I'll get around to handling them in syntaxis. But for now this is on the bottom of my to-do list since 99.9% of Python users also don't know what the hell metaclasses are.
 
 ### Miscellaneous
 
 #### `global` and `nonlocal` statements
 
-`global` statement are used inside functions to declare a variable to be in the global namespace. But saplings doesn't recognize these statements and change the namespace accordingly. For example, given:
+`global` statement are used inside functions to declare a variable to be in the global namespace. But syntaxis doesn't recognize these statements and change the namespace accordingly. For example, given:
 
 ```python
 import some_module
@@ -463,13 +462,13 @@ my_func()
 my_var.bar()
 ```
 
-saplings will produce a tree with `bar` as an attribute of `foo`. This would be a false positive since calling `my_func` sets `my_var` to `None`, and of course `None` doesn't have `bar` as an attribute.
+syntaxis will produce a tree with `bar` as an attribute of `foo`. This would be a false positive since calling `my_func` sets `my_var` to `None`, and of course `None` doesn't have `bar` as an attribute.
 
-`nonlocal` statements are similar to `global`s, except they allow you to modify variables declared in outer scopes. And like `global`s, saplings doesn't recognize `nonlocal` statements.
+`nonlocal` statements are similar to `global`s, except they allow you to modify variables declared in outer scopes. And like `global`s, syntaxis doesn't recognize `nonlocal` statements.
 
 #### Built-in functions
 
-None of Python's [built-in functions](https://docs.python.org/3/library/functions.html) are recognized by saplings. For example, consider the `enumerate` function:
+None of Python's [built-in functions](https://docs.python.org/3/library/functions.html) are recognized by syntaxis. For example, consider the `enumerate` function:
 
 ```python
 import some_module
@@ -478,4 +477,4 @@ for index, item in enumerate(some_module.items):
   print(item.some_attr)
 ```
 
-saplings won't capture `attr` as an attribute of `some_module.items.__iter__`, which it would have if `some_module.items` wasn't wrapped by `enumerate`.
+syntaxis won't capture `attr` as an attribute of `some_module.items.__iter__`, which it would have if `some_module.items` wasn't wrapped by `enumerate`.
